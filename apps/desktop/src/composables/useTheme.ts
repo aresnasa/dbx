@@ -15,35 +15,79 @@ import {
   type AppThemePalette,
   type AppCornerStyle,
 } from "@/lib/app/appTheme";
-import { safeLocalStorageGet, safeLocalStorageSet } from "@/lib/backend/safeStorage";
+import {
+  safeLocalStorageGet,
+  safeLocalStorageSet,
+} from "@/lib/backend/safeStorage";
 import { isTauriRuntime } from "@/lib/backend/tauriRuntime";
 
 function isLinuxTauriRuntime() {
-  return isTauriRuntime() && typeof navigator !== "undefined" && /linux/i.test(navigator.userAgent);
+  return (
+    isTauriRuntime() &&
+    typeof navigator !== "undefined" &&
+    /linux/i.test(navigator.userAgent)
+  );
 }
 
+/**
+ * Session-scoped theme override injected by the embedding host (e.g. RusTerm
+ * mounts this app in an iframe under /dbx and passes ?theme=dark|light so the
+ * embedded panel follows the host's theme instead of this app's own saved
+ * preference). Returns null when not embedded or the value is invalid.
+ */
+function readHostThemeOverride(): AppThemeMode | null {
+  if (typeof window === "undefined" || typeof window.location === "undefined")
+    return null;
+  const params = new URLSearchParams(window.location.search);
+  const theme = params.get("theme");
+  if (theme === "dark" || theme === "light") return theme;
+  return null;
+}
+
+const hostThemeOverride = readHostThemeOverride();
 const savedThemeMode = safeLocalStorageGet(APP_THEME_STORAGE_KEY);
-const themeMode = ref<AppThemeMode>(normalizeAppThemeMode(savedThemeMode));
+const themeMode = ref<AppThemeMode>(
+  hostThemeOverride ?? normalizeAppThemeMode(savedThemeMode),
+);
 const savedThemePalette = safeLocalStorageGet(APP_THEME_PALETTE_STORAGE_KEY);
-const themePalette = ref<AppThemePalette>(normalizeAppThemePalette(savedThemePalette));
+const themePalette = ref<AppThemePalette>(
+  normalizeAppThemePalette(savedThemePalette),
+);
 const savedCornerStyle = safeLocalStorageGet(APP_CORNER_STYLE_STORAGE_KEY);
-const cornerStyle = ref<AppCornerStyle>(normalizeAppCornerStyle(savedCornerStyle));
-if (savedThemeMode && savedThemeMode !== themeMode.value) safeLocalStorageSet(APP_THEME_STORAGE_KEY, themeMode.value);
-if (savedCornerStyle && savedCornerStyle !== cornerStyle.value) safeLocalStorageSet(APP_CORNER_STYLE_STORAGE_KEY, cornerStyle.value);
+const cornerStyle = ref<AppCornerStyle>(
+  normalizeAppCornerStyle(savedCornerStyle),
+);
+if (savedCornerStyle && savedCornerStyle !== cornerStyle.value)
+  safeLocalStorageSet(APP_CORNER_STYLE_STORAGE_KEY, cornerStyle.value);
+// The host override (?theme=…, e.g. RusTerm's embedded panel) is
+// session-scoped: never persist it, so a standalone run of this app keeps
+// the user's own saved preference.
+if (!hostThemeOverride && savedThemeMode && savedThemeMode !== themeMode.value)
+  safeLocalStorageSet(APP_THEME_STORAGE_KEY, themeMode.value);
 const systemPrefersDark = ref(readSystemPrefersDark());
-const isDark = computed(() => resolveAppThemeAppearance(themeMode.value, systemPrefersDark.value) === "dark");
+const isDark = computed(
+  () =>
+    resolveAppThemeAppearance(themeMode.value, systemPrefersDark.value) ===
+    "dark",
+);
 
 let mediaQuery: MediaQueryList | null = null;
 let isListeningForSystemTheme = false;
 let cachedTauriWindow: typeof import("@tauri-apps/api/window") | null = null;
 
 function readSystemPrefersDark() {
-  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function")
+    return false;
   return window.matchMedia("(prefers-color-scheme: dark)").matches;
 }
 
 function setupSystemThemeListener() {
-  if (isListeningForSystemTheme || typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+  if (
+    isListeningForSystemTheme ||
+    typeof window === "undefined" ||
+    typeof window.matchMedia !== "function"
+  )
+    return;
   mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
   systemPrefersDark.value = mediaQuery.matches;
   const onChange = (event: MediaQueryListEvent) => {
@@ -62,7 +106,8 @@ function applyTheme() {
 
   doc.classList.add("disable-transitions");
   doc.classList.toggle("dark", dark);
-  for (const className of APP_THEME_PALETTE_CLASS_NAMES) doc.classList.remove(className);
+  for (const className of APP_THEME_PALETTE_CLASS_NAMES)
+    doc.classList.remove(className);
   const paletteClass = getAppThemePaletteClass(themePalette.value);
   if (paletteClass) doc.classList.add(paletteClass);
   doc.dataset.cornerStyle = cornerStyle.value;
@@ -119,5 +164,15 @@ export function useTheme() {
     setThemeMode(isDark.value ? "light" : "dark");
   }
 
-  return { isDark, themeMode, themePalette, cornerStyle, applyTheme, setThemeMode, setThemePalette, setCornerStyle, toggleTheme };
+  return {
+    isDark,
+    themeMode,
+    themePalette,
+    cornerStyle,
+    applyTheme,
+    setThemeMode,
+    setThemePalette,
+    setCornerStyle,
+    toggleTheme,
+  };
 }
