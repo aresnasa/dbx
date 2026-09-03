@@ -5,8 +5,10 @@ import { Button } from "@/components/ui/button";
 import PasswordInput from "@/components/ui/PasswordInput.vue";
 import { Lock, Loader2, ShieldCheck } from "@lucide/vue";
 import AppLogo from "@/components/icons/AppLogo.vue";
+import AppThemeMenu from "@/components/common/AppThemeMenu.vue";
 import { apiUrl } from "@/lib/common/webPath";
 import { translateBackendError } from "@/i18n/backend-errors";
+import { useTheme } from "@/composables/useTheme";
 
 const props = withDefaults(
   defineProps<{
@@ -17,6 +19,7 @@ const props = withDefaults(
 
 const emit = defineEmits<{ authenticated: [] }>();
 const { t } = useI18n();
+const { isDark, themeMode, setThemeMode } = useTheme();
 
 const password = ref("");
 const confirmPassword = ref("");
@@ -67,7 +70,11 @@ async function submit() {
 </script>
 
 <template>
-  <div class="flex items-center justify-center h-screen bg-gradient-to-br from-background via-background to-blue-950/20">
+  <div class="relative flex h-screen items-center justify-center bg-gradient-to-br from-background via-background to-primary/5 text-foreground dark:to-primary/10">
+    <div class="absolute right-4 top-4">
+      <AppThemeMenu :model-value="themeMode" :is-dark="isDark" button-class="border border-border bg-background/80 shadow-sm backdrop-blur" @update:model-value="setThemeMode" />
+    </div>
+
     <div class="w-[360px] space-y-8">
       <div class="flex flex-col items-center gap-4">
         <AppLogo class="w-20 h-20 rounded-2xl shadow-lg shadow-blue-500/20" />

@@ -6,6 +6,7 @@ import "./styles/globals.css";
 import { installDebugLogCapture } from "@/lib/backend/debugLog";
 import { clearStartupPreloadRetry, retryStartupAfterPreloadFailure } from "@/lib/startup/startupPreloadRecovery";
 import { applyLegacyWebViewClass } from "@/lib/ui/legacyWebView";
+import { startupErrorTheme } from "@/lib/startup/startupErrorTheme";
 
 function startupErrorMessage(error: unknown): string {
   if (error instanceof Error) {
@@ -17,23 +18,24 @@ function startupErrorMessage(error: unknown): string {
 function renderStartupError(error: unknown) {
   if (retryStartupAfterPreloadFailure(error)) return;
   const message = startupErrorMessage(error);
+  const colors = startupErrorTheme(document.documentElement.classList.contains("dark"));
   console.error("[STARTUP] bootstrap failed", error);
   const root = document.querySelector<HTMLDivElement>("#root");
   if (!root) return;
   root.innerHTML = "";
   const panel = document.createElement("div");
-  panel.style.cssText = ["display:flex", "min-height:100vh", "align-items:center", "justify-content:center", "background:#ffffff", "color:#111827", "padding:24px", "font-family:ui-sans-serif,system-ui,sans-serif"].join(";");
+  panel.style.cssText = ["display:flex", "min-height:100vh", "align-items:center", "justify-content:center", `background:${colors.background}`, `color:${colors.foreground}`, "padding:24px", "font-family:ui-sans-serif,system-ui,sans-serif"].join(";");
   const card = document.createElement("div");
-  card.style.cssText = ["max-width:760px", "width:100%", "border:1px solid #e5e7eb", "border-radius: var(--dbx-radius-fixed-6)", "padding:20px", "box-shadow:0 10px 30px rgba(0,0,0,0.08)", "background:#fff"].join(";");
+  card.style.cssText = ["max-width:760px", "width:100%", `border:1px solid ${colors.border}`, "border-radius: var(--dbx-radius-fixed-6)", "padding:20px", `box-shadow:${colors.shadow}`, `background:${colors.card}`].join(";");
   const title = document.createElement("h1");
   title.textContent = "DBX startup failed";
   title.style.cssText = "margin:0 0 12px;font-size:18px;font-weight:700;";
   const text = document.createElement("p");
   text.textContent = "The desktop UI crashed during startup. Please copy the error below and send it to the DBX team.";
-  text.style.cssText = "margin:0 0 12px;font-size:13px;line-height:1.5;color:#4b5563;";
+  text.style.cssText = `margin:0 0 12px;font-size:13px;line-height:1.5;color:${colors.mutedForeground};`;
   const pre = document.createElement("pre");
   pre.textContent = message;
-  pre.style.cssText = ["margin:0", "white-space:pre-wrap", "word-break:break-word", "font-size:12px", "line-height:1.5", "background:#f9fafb", "border-radius: var(--dbx-radius-fixed-4)", "padding:12px", "overflow:auto"].join(";");
+  pre.style.cssText = ["margin:0", "white-space:pre-wrap", "word-break:break-word", "font-size:12px", "line-height:1.5", `background:${colors.codeBackground}`, "border-radius: var(--dbx-radius-fixed-4)", "padding:12px", "overflow:auto"].join(";");
   card.append(title, text, pre);
   panel.append(card);
   root.append(panel);

@@ -7,11 +7,12 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import LightDropdown from "@/components/ui/LightDropdown.vue";
 import WindowControls from "@/components/layout/WindowControls.vue";
+import AppThemeMenu from "@/components/common/AppThemeMenu.vue";
 import ExportProgressPopover from "@/components/export/ExportProgressPopover.vue";
 import { MAC_TRAFFIC_LIGHT_X, macTrafficLightInsetPaddingForScale, shouldReserveMacTrafficLightInset, useWindowControls } from "@/composables/useWindowControls";
 import { useToast } from "@/composables/useToast";
 import { useSettingsStore } from "@/stores/settingsStore";
-import { isSystemAppThemeMode, type AppThemeMode } from "@/lib/app/appTheme";
+import type { AppThemeMode } from "@/lib/app/appTheme";
 
 const GithubIcon = {
   render() {
@@ -66,7 +67,7 @@ const { isMac, isDesktop, showControls, isMaximized, isFullscreen, minimize, tog
 const checkingUpdates = computed(() => props.checkingUpdates);
 
 const themeTriggerIcon = computed(() => {
-  if (isSystemAppThemeMode(props.themeMode)) return SunMoon;
+  if (props.themeMode === "system") return SunMoon;
   return props.isDark ? Moon : Sun;
 });
 
@@ -83,10 +84,14 @@ function themeModeLabel(mode: AppThemeMode): string {
   return t("toolbar.themeSystem");
 }
 
+function selectThemeMode(mode: AppThemeMode) {
+  if (mode === props.themeMode) return;
+  emit("set-theme-mode", mode);
+  toast(`${t("toolbar.theme")}: ${themeModeLabel(mode)}`, 1600);
+}
+
 function cycleThemeMode() {
-  const next = nextThemeMode(props.themeMode);
-  emit("set-theme-mode", next);
-  toast(`${t("toolbar.theme")}: ${themeModeLabel(next)}`, 1600);
+  selectThemeMode(nextThemeMode(props.themeMode));
 }
 
 function onToolbarDblClick(e: MouseEvent) {
@@ -593,14 +598,7 @@ const toolbarStyle = computed(() => {
         <TooltipContent>AI</TooltipContent>
       </Tooltip>
 
-      <Tooltip v-if="toolbarItems.theme">
-        <TooltipTrigger as-child>
-          <Button v-show="isRightItemVisible('theme')" variant="ghost" size="icon" class="h-8 w-8 shrink-0" :aria-label="t('toolbar.theme')" @click="cycleThemeMode">
-            <component :is="themeTriggerIcon" class="h-4 w-4" />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>{{ t("toolbar.theme") }}</TooltipContent>
-      </Tooltip>
+      <AppThemeMenu v-if="toolbarItems.theme" v-show="isRightItemVisible('theme')" :model-value="themeMode" :is-dark="isDark" @update:model-value="selectThemeMode" />
 
       <Tooltip v-if="toolbarItems.github">
         <TooltipTrigger as-child>
