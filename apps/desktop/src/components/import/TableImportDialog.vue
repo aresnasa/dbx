@@ -3,15 +3,16 @@ import { computed, ref, shallowRef, watch } from "vue";
 import { uuid } from "@/lib/common/utils";
 import { useI18n } from "vue-i18n";
 import { isTauriRuntime } from "@/lib/backend/tauriRuntime";
-import { Dialog, DialogHeader, DialogTitle, DialogFooter, DialogScrollContent } from "@/components/ui/dialog";
+import { Dialog, DialogHeader, DialogTitle, DialogFooter, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { AlertTriangle, ArrowLeft, ArrowRight, Check, CheckCircle2, FileJson, FileSpreadsheet, FileText, FileUp, Loader2, RefreshCw, Square, Upload, X } from "@lucide/vue";
+import { AlertTriangle, ArrowLeft, ArrowRight, Check, CheckCircle2, FileJson, FileSpreadsheet, FileText, FileUp, Loader2, Maximize2, Minimize2, RefreshCw, Square, Upload, X } from "@lucide/vue";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useToast } from "@/composables/useToast";
+import { useDialogFullscreen } from "@/composables/useDialogFullscreen";
 import {
   autoMapImportColumns,
   buildTableImportParseOptions,
@@ -36,6 +37,21 @@ const store = useConnectionStore();
 const settingsStore = useSettingsStore();
 const { toast } = useToast();
 const open = defineModel<boolean>("open", { default: false });
+
+// Fullscreen page support (native window fullscreen in Tauri, Fullscreen API on web).
+const { isFullscreen, toggleFullscreen, exitFullscreenIfOwned } = useDialogFullscreen();
+const dialogStyle = computed(() => {
+  if (isFullscreen.value) {
+    return { width: "100%", height: "100%", maxWidth: "100%", maxHeight: "100%", borderRadius: "0" };
+  }
+  return { width: "min(980px, calc(100vw - 2rem))" };
+});
+watch(open, (val) => {
+  if (!val) {
+    // Leaving the page — restore the window state if we went fullscreen.
+    void exitFullscreenIfOwned();
+  }
+});
 
 const props = defineProps<{
   prefillConnectionId?: string;
@@ -1008,12 +1024,29 @@ watch(rawProgressPercent, (percent) => {
 
 <template>
   <Dialog v-model:open="open">
-    <DialogScrollContent class="flex max-h-[calc(var(--dbx-viewport-height)-6rem)] min-h-0 flex-col overflow-hidden sm:max-w-[980px]" :trap-focus="false" @interact-outside.prevent>
-      <DialogHeader class="shrink-0 pr-8">
+    <DialogContent
+      class="flex max-h-[calc(var(--dbx-viewport-height)-6rem)] min-h-0 flex-col overflow-hidden p-4 gap-4"
+      :class="isFullscreen ? 'rounded-none max-h-none' : 'sm:max-w-[980px]'"
+      :style="dialogStyle"
+      :portal-class="isFullscreen ? 'p-0' : undefined"
+      :trap-focus="false"
+      :show-close-button="false"
+      @interact-outside.prevent
+    >
+      <DialogHeader class="flex shrink-0 flex-row items-center justify-between gap-2">
         <DialogTitle class="flex items-center gap-2 text-base">
           <FileUp class="h-4 w-4" />
           {{ t("tableImport.title") }}
         </DialogTitle>
+        <div class="flex items-center gap-1">
+          <Button variant="ghost" size="icon" class="h-7 w-7" :title="isFullscreen ? t('tableImport.exitFullscreen') : t('tableImport.fullscreen')" @click="toggleFullscreen">
+            <Minimize2 v-if="isFullscreen" class="h-4 w-4" />
+            <Maximize2 v-else class="h-4 w-4" />
+          </Button>
+          <Button variant="ghost" size="icon" class="h-7 w-7" @click="open = false">
+            <X class="h-4 w-4" />
+          </Button>
+        </div>
       </DialogHeader>
 
       <div class="min-h-0 flex-1 space-y-4 overflow-y-auto py-2 pr-1">
@@ -1502,6 +1535,6 @@ watch(rawProgressPercent, (percent) => {
           {{ t("common.done") }}
         </Button>
       </DialogFooter>
-    </DialogScrollContent>
+    </DialogContent>
   </Dialog>
 </template>

@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use rusqlite::DatabaseName;
+use rusqlite::MAIN_DB; // PATCHED: rusqlite 0.37 replaced DatabaseName::Main with MAIN_DB
 
 use crate::db::sqlite::{is_memory_database_path, SqliteHandle};
 use crate::path_utils::expand_tilde;
@@ -16,7 +16,7 @@ pub async fn backup_sqlite_database(pool: SqliteHandle, options: SqliteBackupOpt
     let temp = backup_temp_path(&destination);
     tokio::task::spawn_blocking(move || {
         pool.with_connection(|conn| {
-            conn.backup(DatabaseName::Main, &temp, None).map_err(|e| format!("SQLite backup failed: {e}"))
+            conn.backup(MAIN_DB, &temp, None).map_err(|e| format!("SQLite backup failed: {e}"))
         })?;
         replace_backup_file(&temp, &destination)
     })

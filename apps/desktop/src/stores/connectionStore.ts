@@ -110,7 +110,6 @@ import { normalizeRedisDatabaseAliases, redisDatabaseAlias, redisDatabaseLabel }
 import { appendAgentDriverUpdateHint, hasAgentDriverUpdate, hasInstalledAgentVersion, type AgentDriverInstallState } from "@/lib/connection/agentDriverInstallHint";
 import { appendConnectionErrorHints } from "@/lib/connection/connectionErrorHints";
 import { appendVisibleDatabaseSelection } from "@/lib/connection/connectionVisibleDatabases";
-import { buildXuguTypeMemberNodes, isXuguTypeMemberContainer } from "@/lib/sidebar/xuguTypeMembers";
 import { filterNacosNamespacesForSidebar, normalizeNacosNamespacesForDisplay } from "@/lib/nacos/nacosNamespaceVisibility";
 import { buildPackageMemberNodes, markPackageNodesExpandable } from "@/lib/sidebar/packageMembers";
 import { configuredDatabaseProductName, connectionConfigFingerprint, normalizeDatabaseConnectionInfo } from "@/lib/connection/connectionDatabaseInfo";
@@ -1872,8 +1871,7 @@ export const useConnectionStore = defineStore("connection", () => {
         schema: options.effectiveSchema,
         objects: supplementalObjects,
       });
-      const databaseType = effectiveDatabaseTypeForConnection(getConfig(options.connectionId));
-      if (supportsPackageMemberExpansion(databaseType)) {
+      if (supportsPackageMemberExpansion(effectiveDatabaseTypeForConnection(getConfig(options.connectionId)))) {
         supplementalChildren = markPackageNodesExpandable(supplementalChildren);
       }
       if (supplementalChildren.length === 0) return;
@@ -5162,25 +5160,19 @@ export const useConnectionStore = defineStore("connection", () => {
       const triggers = await api.listTriggers(connectionId, database, querySchema, table, catalog);
       const targetNode = treeNodeLoadTarget(load);
       if (!targetNode) return;
-      const isXugu = effectiveDatabaseTypeForConnection(getConfig(connectionId)) === "xugu";
       setChildren(
         targetNode,
-        triggers.map((tr) => {
-          const xuguDetails = isXugu ? [tr.timing, tr.event, tr.level, tr.enabled === false ? i18n.global.t("objects.disabled") : null, tr.valid === false ? i18n.global.t("objects.invalid") : null].filter(Boolean).join(" · ") : `${tr.timing} ${tr.event}`;
-          return {
-            id: `${parentId}:${tr.name}`,
-            label: `${tr.name} (${xuguDetails})`,
-            objectName: tr.name,
-            type: "trigger" as const,
-            connectionId,
-            database,
-            schema,
-            tableName: table,
-            comment: isXugu ? tr.comment : undefined,
-            valid: isXugu ? tr.valid : undefined,
-            meta: tr,
-          };
-        }),
+        triggers.map((tr) => ({
+          id: `${parentId}:${tr.name}`,
+          label: `${tr.name} (${tr.timing} ${tr.event})`,
+          objectName: tr.name,
+          type: "trigger" as const,
+          connectionId,
+          database,
+          schema,
+          tableName: table,
+          meta: tr,
+        })),
       );
       targetNode.isExpanded = true;
     } catch (e) {
@@ -5616,7 +5608,6 @@ export const useConnectionStore = defineStore("connection", () => {
       search_in_definitions: !!request.search_in_definitions,
       parent_schema: request.parent_schema ?? "",
       parent_name: request.parent_name ?? "",
-      parent_type: request.parent_type ?? "",
       match_mode: request.match_mode ?? "prefix",
     });
   }
@@ -5630,8 +5621,7 @@ export const useConnectionStore = defineStore("connection", () => {
 
   async function loadPackageMembers(node: TreeNode, options?: LoadTreeOptions): Promise<void> {
     if (node.type !== "package" || !node.connectionId || !node.database) return;
-    const databaseType = effectiveDatabaseTypeForConnection(getConfig(node.connectionId));
-    if (!supportsPackageMemberExpansion(databaseType)) return;
+    if (!supportsPackageMemberExpansion(effectiveDatabaseTypeForConnection(getConfig(node.connectionId)))) return;
     const connectionId = node.connectionId;
     const database = node.database;
     const schema = node.schema;
@@ -5664,7 +5654,6 @@ export const useConnectionStore = defineStore("connection", () => {
             search_in_definitions: false,
             parent_schema: schema ?? null,
             parent_name: packageName,
-            ...(databaseType === "xugu" ? { parent_type: "package" as const } : {}),
             match_mode: "prefix",
           });
           const targetNode = treeNodeLoadTarget(load);
@@ -5679,60 +5668,6 @@ export const useConnectionStore = defineStore("connection", () => {
       throw error;
     } finally {
       finishTreeNodeLoad(load);
-    }
-  }
-
-  async function loadXuguTypeMembers(node: TreeNode): Promise<void> {
-    if (!isXuguTypeMemberContainer(node, getConfig(node.connectionId || "")?.db_type)) return;
-    const connectionId = node.connectionId;
-    const database = node.database;
-    if (!connectionId || !database) return;
-    if (node.isExpanded) {
-      node.isExpanded = false;
-      if (!sidebarSearchQuery.value) releaseCollapsedTreeNodeChildren(node.id);
-      return;
-    }
-    if (node.children && node.children.length > 0) {
-      node.isExpanded = true;
-      return;
-    }
-
-    const schema = node.schema || "";
-    const parentName = node.objectName || node.label;
-    node.isLoading = true;
-    try {
-      const [attributes, methods] = await Promise.all([
-        completionAssistantSearch({
-          connection_id: connectionId,
-          database,
-          schema,
-          object_kinds: ["column"],
-          mask: "",
-          max_results: 500,
-          global_search: false,
-          parent_schema: schema,
-          parent_name: parentName,
-          parent_type: "type",
-          match_mode: "prefix",
-        }),
-        completionAssistantSearch({
-          connection_id: connectionId,
-          database,
-          schema,
-          object_kinds: ["routine"],
-          mask: "",
-          max_results: 500,
-          global_search: false,
-          parent_schema: schema,
-          parent_name: parentName,
-          parent_type: "type",
-          match_mode: "prefix",
-        }),
-      ]);
-      node.children = buildXuguTypeMemberNodes(node, [...attributes.candidates, ...methods.candidates]);
-      node.isExpanded = true;
-    } finally {
-      node.isLoading = false;
     }
   }
 
@@ -7348,7 +7283,6 @@ export const useConnectionStore = defineStore("connection", () => {
     loadTableForLocate,
     loadObjectGroupChildren,
     loadPackageMembers,
-    loadXuguTypeMembers,
     loadMoreObjectGroupChildren,
     loadAllObjectGroupChildren,
     loadTableGroups,

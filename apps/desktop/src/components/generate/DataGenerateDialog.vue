@@ -4,25 +4,41 @@ import { useI18n } from "vue-i18n";
 import { useConnectionStore } from "@/stores/connectionStore";
 import * as api from "@/lib/backend/api";
 import type { GenerateResult, TableGenerateConfig } from "@/lib/dataGrid/dataGenerate";
-import { displayGeneratedValue, findGeneratorKey, formatGeneratedValue, generateTableData, defaultGeneratorParams, supportsGeneratedMultiRowValues } from "@/lib/dataGrid/dataGenerate";
+import { displayGeneratedValue, findGeneratorKey, formatGeneratedValue, generateTableData, defaultGeneratorParams, isInsertableTableType, supportsGeneratedMultiRowValues } from "@/lib/dataGrid/dataGenerate";
 import { qualifiedTableName, quoteTableIdentifier } from "@/lib/table/tableSelectSql";
 import { isTauriRuntime } from "@/lib/backend/tauriRuntime";
 import { effectiveDatabaseTypeForConnection } from "@/lib/database/jdbcDialect";
 import { executeWithProductionSqlGuard } from "@/lib/database/productionExecutionGuard";
+import { useDialogFullscreen } from "@/composables/useDialogFullscreen";
 import GeneratorParamsPanel from "./params/GeneratorParamsPanel.vue";
 import type { ColumnInfo, TableInfo } from "@/types/database";
 
-import { Dialog, DialogHeader, DialogTitle, DialogScrollContent, DialogContent, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogHeader, DialogTitle, DialogContent, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Database, Table, Columns, Loader2, Save, Upload, Settings, ChevronRight, X, AlertCircle, ArrowUp, ArrowDown } from "@lucide/vue";
+import { Database, Table, Columns, Loader2, Save, Upload, Settings, ChevronRight, X, AlertCircle, ArrowUp, ArrowDown, Maximize2, Minimize2, Eye } from "@lucide/vue";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 const { t } = useI18n();
 const store = useConnectionStore();
 const dbType = computed(() => effectiveDatabaseTypeForConnection(store.getConfig(props.prefillConnectionId ?? "")));
 const open = defineModel<boolean>("open", { default: false });
+
+// Fullscreen page support (native window fullscreen in Tauri, Fullscreen API on web).
+const { isFullscreen, toggleFullscreen, exitFullscreenIfOwned } = useDialogFullscreen();
+const dialogStyle = computed(() => {
+  if (isFullscreen.value) {
+    return {
+      width: "100%",
+      height: "100%",
+      maxWidth: "100%",
+      maxHeight: "100%",
+      borderRadius: "0",
+    };
+  }
+  return { width: "min(1100px, calc(100vw - 2rem))" };
+});
 
 const props = defineProps<{
   prefillConnectionId?: string;
@@ -129,7 +145,7 @@ async function loadSchemas() {
               rowCount: 1000,
               columns: cols.map((c: ColumnInfo) => {
                 const isAI = c.extra === "auto_increment" || (c.column_default?.toLowerCase().includes("nextval") ?? false);
-                const gKey = findGeneratorKey(c.name, c.data_type, isAI);
+                const gKey = findGeneratorKey(c.name, c.data_type, isAI, dbType.value, c.enum_values);
                 return {
                   columnName: c.name,
                   dataType: c.data_type,
@@ -144,8 +160,10 @@ async function loadSchemas() {
                       numericPrecision: c.numeric_precision,
                       numericScale: c.numeric_scale,
                       characterMaximumLength: c.character_maximum_length,
+                      enumValues: c.enum_values,
                     },
                     gKey,
+                    dbType.value,
                   ),
                   isAutoIncrement: isAI,
                   isTag: isTdengineTagColumn(c),
@@ -153,9 +171,12 @@ async function loadSchemas() {
                 };
               }),
             };
-            checkedTables[key] = true;
-            for (const c of cols) {
-              checkedColumns[colKey(targetSchema, props.prefillTable, c.name)] = true;
+            // Views cannot receive generated INSERT data.
+            if (isInsertableTableType(prefillTableInfo.table_type)) {
+              checkedTables[key] = true;
+              for (const c of cols) {
+                checkedColumns[colKey(targetSchema, props.prefillTable, c.name)] = true;
+              }
             }
             panelTableKey.value = key;
             panelMode.value = "table";
@@ -227,7 +248,7 @@ async function loadColumns(schema: string, table: string) {
     rowCount: 1000,
     columns: cols.map((c: ColumnInfo) => {
       const isAI = c.extra === "auto_increment" || (c.column_default?.toLowerCase().includes("nextval") ?? false);
-      const gKey = findGeneratorKey(c.name, c.data_type, isAI);
+      const gKey = findGeneratorKey(c.name, c.data_type, isAI, dbType.value, c.enum_values);
       return {
         columnName: c.name,
         dataType: c.data_type,
@@ -242,8 +263,10 @@ async function loadColumns(schema: string, table: string) {
             numericPrecision: c.numeric_precision,
             numericScale: c.numeric_scale,
             characterMaximumLength: c.character_maximum_length,
+            enumValues: c.enum_values,
           },
           gKey,
+          dbType.value,
         ),
         isAutoIncrement: isAI,
         isTag: isTdengineTagColumn(c),
@@ -261,6 +284,9 @@ async function loadColumns(schema: string, table: string) {
 
 async function selectTable(schema: string, table: string, checked: boolean) {
   const key = tableKey(schema, table);
+  // Type gate: views (VIEW / MATERIALIZED_VIEW) cannot receive generated data.
+  const insertable = isInsertableTableType(tableInfo(schema, table)?.table_type);
+  if (checked && !insertable) return;
   if (checked) {
     checkedTables[key] = true;
     if (!configs[key]) {
@@ -365,7 +391,18 @@ function onPreviewColResizeStart(ci: number, event: MouseEvent) {
   document.addEventListener("pointerup", onUp);
   document.body.classList.add("select-none", "cursor-col-resize");
 }
-const currentPreview = computed<GeneratedTableResult>(() => generatedResults.value[previewTableIndex.value] ?? { tableName: "", schema: "", columns: [], rows: [], sql: "", statements: [] });
+const currentPreview = computed<GeneratedTableResult>(
+  () =>
+    generatedResults.value[previewTableIndex.value] ?? {
+      tableName: "",
+      schema: "",
+      columns: [],
+      columnTypes: [],
+      rows: [],
+      sql: "",
+      statements: [],
+    },
+);
 
 function displayPreviewCell(cell: unknown): string {
   return displayGeneratedValue(cell);
@@ -401,6 +438,8 @@ async function doGenerate() {
   for (const key of order) {
     if (!checkedTables[key]) continue;
     const cfg = configs[key];
+    // Type gate — a profile loaded from disk may still reference a view.
+    if (!isInsertableTableType(cfg.tableType)) continue;
     let columns = cfg.columns.filter((col) => checkedColumns[colKey(cfg.schema, cfg.tableName, col.columnName)] !== false);
     if (columns.length === 0) continue;
     const aiStarts = await fetchMaxValues(cfg);
@@ -408,13 +447,21 @@ async function doGenerate() {
       columns = columns.map((col) => {
         const start = aiStarts[col.columnName];
         if (start !== undefined) {
-          return { ...col, generatorKey: "sequence", generatorParams: { startValue: start, increment: 1 } };
+          return {
+            ...col,
+            generatorKey: "sequence",
+            generatorParams: { startValue: start, increment: 1 },
+          };
         }
         return col;
       });
     }
     const result = generateTableData({ ...cfg, columns }, dbType.value);
-    results.push({ tableName: cfg.tableName, schema: cfg.schema, ...result });
+    results.push({
+      tableName: cfg.tableName,
+      schema: cfg.schema,
+      ...result,
+    });
   }
   generatedResults.value = results;
   previewTableIndex.value = 0;
@@ -433,13 +480,21 @@ async function regenerate() {
     columns = columns.map((col) => {
       const start = aiStarts[col.columnName];
       if (start !== undefined) {
-        return { ...col, generatorKey: "sequence", generatorParams: { startValue: start, increment: 1 } };
+        return {
+          ...col,
+          generatorKey: "sequence",
+          generatorParams: { startValue: start, increment: 1 },
+        };
       }
       return col;
     });
   }
   const result = generateTableData({ ...cfg, columns }, dbType.value);
-  generatedResults.value[previewTableIndex.value] = { tableName: cfg.tableName, schema: cfg.schema, ...result };
+  generatedResults.value[previewTableIndex.value] = {
+    tableName: cfg.tableName,
+    schema: cfg.schema,
+    ...result,
+  };
 }
 
 function copyAllSql() {
@@ -477,7 +532,12 @@ const optionsDialogOpen = ref(false);
 
 function sqlStatementsForTable(r: GeneratedTableResult): string[] {
   const stmts: string[] = [];
-  const targetTable = qualifiedTableName({ databaseType: dbType.value, schema: r.schema, tableName: r.tableName, database: props.prefillDatabase });
+  const targetTable = qualifiedTableName({
+    databaseType: dbType.value,
+    schema: r.schema,
+    tableName: r.tableName,
+    database: props.prefillDatabase,
+  });
   if (generateOptions.truncate) {
     stmts.push(`TRUNCATE TABLE ${targetTable};`);
   }
@@ -486,7 +546,7 @@ function sqlStatementsForTable(r: GeneratedTableResult): string[] {
   } else {
     const colList = r.columns.map((c) => quoteTableIdentifier(dbType.value, c)).join(", ");
     for (const row of r.rows) {
-      const vals = row.map((value) => formatGeneratedValue(value)).join(", ");
+      const vals = row.map((value, ci) => formatGeneratedValue(value, dbType.value, r.columnTypes[ci])).join(", ");
       stmts.push(`INSERT INTO ${targetTable} (${colList}) VALUES (${vals});`);
     }
   }
@@ -557,7 +617,13 @@ async function startInsert() {
               }
             }
           }
-          perTable.push({ table: r.tableName, total: rowCount, ok, err: rowCount - ok, error: lastError || undefined });
+          perTable.push({
+            table: r.tableName,
+            total: rowCount,
+            ok,
+            err: rowCount - ok,
+            error: lastError || undefined,
+          });
           if (ok > 0) {
             store.invalidateMetadataCache(cid, db, r.schema || props.prefillSchema || undefined, r.tableName);
           }
@@ -640,6 +706,9 @@ onMounted(() => {
 watch(open, (val) => {
   if (val) {
     void loadSchemas();
+  } else {
+    // Leaving the page — restore the window state if we went fullscreen.
+    void exitFullscreenIfOwned();
   }
 });
 
@@ -718,7 +787,11 @@ async function saveProfile() {
   }
 }
 
-function applyProfileData(data: Partial<GenerateProfileJson> & { configs?: Record<string, TableGenerateConfig> }) {
+function applyProfileData(
+  data: Partial<GenerateProfileJson> & {
+    configs?: Record<string, TableGenerateConfig>;
+  },
+) {
   if (!data.configs || typeof data.configs !== "object") {
     throw new Error("Invalid profile file: missing configs");
   }
@@ -794,27 +867,34 @@ async function onFileSelected(event: Event) {
 
 <template>
   <Dialog v-model:open="open">
-    <DialogScrollContent class="max-w-[1100px] pt-12">
-      <DialogHeader>
+    <DialogContent class="gap-0 overflow-hidden p-0 pl-4 pb-4 sm:pl-6 sm:pb-6 pt-2 flex min-h-0 flex-col min-w-0" :class="isFullscreen ? 'rounded-none' : ''" :style="dialogStyle" :portal-class="isFullscreen ? 'p-0' : undefined">
+      <DialogHeader class="flex shrink-0 flex-row items-center gap-2 pr-16 pl-2 pt-2 sm:pl-4">
         <DialogTitle class="flex items-center gap-2 text-base">
           <Database class="h-4 w-4" />
           {{ t("dataGenerate.title") }}
         </DialogTitle>
+        <div class="ml-2 hidden truncate text-xs text-muted-foreground sm:block">
+          {{ connectionName || props.prefillDatabase }}
+        </div>
+        <Button variant="ghost" size="icon" class="absolute top-2 right-8 h-7 w-7" :title="isFullscreen ? t('dataGenerate.exitFullscreen') : t('dataGenerate.fullscreen')" @click="toggleFullscreen">
+          <Minimize2 v-if="isFullscreen" class="h-4 w-4" />
+          <Maximize2 v-else class="h-4 w-4" />
+        </Button>
       </DialogHeader>
 
-      <div class="rounded-md border bg-muted/20 px-3 py-2 text-sm">
+      <div class="mx-2 mb-3 shrink-0 rounded-md border bg-muted/20 px-3 py-2 text-sm sm:mx-4">
         <span class="text-muted-foreground">{{ t("dataGenerate.target") }}:</span>
         <span class="ml-1 font-medium">{{ connectionName || props.prefillDatabase }}</span>
       </div>
 
       <template v-if="currentStep === 'config'">
-        <div class="flex gap-4 min-h-[400px]">
+        <div class="flex flex-1 gap-4 min-h-0" :class="isFullscreen ? '' : 'h-[400px]'">
           <!-- left: schema tree -->
-          <div class="w-64 shrink-0 rounded-md border">
+          <div class="w-64 shrink-0 rounded-md border flex flex-col min-h-0">
             <div class="border-b px-3 py-2 text-xs font-medium text-muted-foreground">
               {{ t("dataGenerate.databaseObjects") }}
             </div>
-            <ScrollArea class="h-[380px] p-1">
+            <ScrollArea class="p-1 min-h-0" :class="isFullscreen ? 'flex-1' : 'h-[380px]'">
               <div v-if="loading" class="flex items-center justify-center py-8">
                 <Loader2 class="h-4 w-4 animate-spin text-muted-foreground" />
               </div>
@@ -824,7 +904,13 @@ async function onFileSelected(event: Event) {
                 <div class="group flex items-center gap-1.5 py-1 px-2 cursor-pointer hover:bg-accent" @click="toggleSchema(sc)">
                   <button type="button" class="-m-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground">
                     <Loader2 v-if="schemaLoading[sc]" class="h-3.5 w-3.5 animate-spin" />
-                    <ChevronRight v-else class="h-3.5 w-3.5 transition-transform" :class="{ 'rotate-90': expandedSchemas[sc] }" />
+                    <ChevronRight
+                      v-else
+                      class="h-3.5 w-3.5 transition-transform"
+                      :class="{
+                        'rotate-90': expandedSchemas[sc],
+                      }"
+                    />
                   </button>
                   <span class="text-sm truncate">{{ sc }}</span>
                   <AlertCircle v-if="schemaError[sc]" class="ml-auto h-3.5 w-3.5 text-destructive shrink-0" />
@@ -833,14 +919,36 @@ async function onFileSelected(event: Event) {
                 <div v-if="expandedSchemas[sc] && schemaTables[sc]" class="ml-[18px]">
                   <div v-for="tbl in schemaTables[sc]" :key="tbl.name">
                     <!-- table row -->
-                    <div class="group flex items-center gap-1.5 py-1 px-2 cursor-pointer hover:bg-accent" @click="activateTable(sc, tbl.name)">
+                    <div class="group flex items-center gap-1.5 py-1 px-2 cursor-pointer hover:bg-accent" :title="isInsertableTableType(tbl.table_type) ? tbl.name : t('dataGenerate.viewNotInsertable')" @click="activateTable(sc, tbl.name)">
                       <button type="button" class="-m-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground" @click.stop="toggleTable(sc, tbl.name)">
                         <Loader2 v-if="tableColumnsLoading[tableKey(sc, tbl.name)]" class="h-3.5 w-3.5 animate-spin" />
-                        <ChevronRight v-else class="h-3.5 w-3.5 transition-transform" :class="{ 'rotate-90': expandedTables[tableKey(sc, tbl.name)] }" />
+                        <ChevronRight
+                          v-else
+                          class="h-3.5 w-3.5 transition-transform"
+                          :class="{
+                            'rotate-90': expandedTables[tableKey(sc, tbl.name)],
+                          }"
+                        />
                       </button>
-                      <input type="checkbox" class="h-3.5 w-3.5 accent-primary shrink-0" :checked="!!checkedTables[tableKey(sc, tbl.name)]" :ref="(el) => setTableRef(el, tableKey(sc, tbl.name))" @click.stop @change="updateTableSelection(sc, tbl.name, ($event.target as HTMLInputElement).checked)" />
-                      <Table class="h-3.5 w-3.5 shrink-0 text-green-500" />
-                      <span class="text-sm truncate" :class="{ 'text-foreground font-medium': panelTableKey === tableKey(sc, tbl.name), 'text-muted-foreground': panelTableKey !== tableKey(sc, tbl.name) }">
+                      <input
+                        v-if="isInsertableTableType(tbl.table_type)"
+                        type="checkbox"
+                        class="h-3.5 w-3.5 accent-primary shrink-0"
+                        :checked="!!checkedTables[tableKey(sc, tbl.name)]"
+                        :ref="(el) => setTableRef(el, tableKey(sc, tbl.name))"
+                        @click.stop
+                        @change="updateTableSelection(sc, tbl.name, ($event.target as HTMLInputElement).checked)"
+                      />
+                      <span v-else class="flex h-3.5 w-3.5 shrink-0 items-center justify-center" />
+                      <Table v-if="isInsertableTableType(tbl.table_type)" class="h-3.5 w-3.5 shrink-0 text-green-500" />
+                      <Eye v-else class="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      <span
+                        class="text-sm truncate"
+                        :class="{
+                          'text-foreground font-medium': panelTableKey === tableKey(sc, tbl.name),
+                          'text-muted-foreground': panelTableKey !== tableKey(sc, tbl.name),
+                        }"
+                      >
                         {{ tbl.name }}
                       </span>
                     </div>
@@ -850,7 +958,9 @@ async function onFileSelected(event: Event) {
                         v-for="col in tableColumnsExt[tableKey(sc, tbl.name)]"
                         :key="col.name"
                         class="group flex items-center gap-1.5 py-0.5 px-2 cursor-pointer hover:bg-accent"
-                        :class="{ 'bg-accent': panelColumnName === col.name && panelTableKey === tableKey(sc, tbl.name) }"
+                        :class="{
+                          'bg-accent': panelColumnName === col.name && panelTableKey === tableKey(sc, tbl.name),
+                        }"
                         @click="showColumn(sc, tbl.name, col.name)"
                       >
                         <input type="checkbox" class="h-3 w-3 accent-primary shrink-0" :checked="!!checkedColumns[colKey(sc, tbl.name, col.name)]" @click.stop @change="toggleColumn(sc, tbl.name, col.name)" />
@@ -870,8 +980,8 @@ async function onFileSelected(event: Event) {
           </div>
 
           <!-- right: active table config -->
-          <div class="flex-1 rounded-md border">
-            <div class="h-[380px] p-1 pt-10 overflow-y-auto">
+          <div class="flex-1 rounded-md border flex flex-col min-h-0">
+            <div class="overflow-y-auto min-h-0" :class="isFullscreen ? 'flex-1' : 'h-[380px]'">
               <div v-if="!activeCfg" class="flex h-full items-center justify-center text-xs text-muted-foreground">
                 {{ t("dataGenerate.selectTable") }}
               </div>
@@ -885,8 +995,14 @@ async function onFileSelected(event: Event) {
                   </div>
                   <GeneratorParamsPanel :config="activeCol" :connection-id="props.prefillConnectionId" :database="props.prefillDatabase" />
                   <div class="rounded border border-dashed border-amber-300 bg-amber-50 dark:bg-amber-950/20 px-2 py-1 text-[10px] font-mono text-amber-700 dark:text-amber-400 leading-relaxed break-all">
-                    <div>generatorKey: {{ activeCol.generatorKey ?? "(none)" }}</div>
-                    <div>generatorParams: {{ JSON.stringify(activeCol.generatorParams) }}</div>
+                    <div>
+                      generatorKey:
+                      {{ activeCol.generatorKey ?? "(none)" }}
+                    </div>
+                    <div>
+                      generatorParams:
+                      {{ JSON.stringify(activeCol.generatorParams) }}
+                    </div>
                   </div>
                 </div>
               </template>
@@ -909,59 +1025,95 @@ async function onFileSelected(event: Event) {
 
       <template v-else-if="currentStep === 'preview'">
         <!-- status bar -->
-        <div class="flex items-center justify-between -mx-4 -mt-4 mb-0 px-4 py-2 border-b bg-muted/10">
+        <div class="flex items-center justify-between mx-2 mb-3 shrink-0 px-4 py-2 border rounded-md bg-muted/10 sm:mx-4">
           <div class="flex items-center gap-1.5 text-xs text-muted-foreground">
             <Database class="h-3.5 w-3.5" />
             <span class="font-medium text-foreground">{{ connectionName || props.prefillDatabase }}</span>
             <span class="text-muted-foreground">/</span>
-            <span>{{ Object.keys(checkedTables).length > 0 ? Object.keys(checkedTables)[0].split(".")[0] : props.prefillSchema || "main" }}</span>
+            <span class="text-sm font-medium">{{ Object.keys(checkedTables).length > 0 ? Object.keys(checkedTables)[0].split(".")[0] : props.prefillSchema || "main" }}</span>
           </div>
-          <span class="text-sm font-medium absolute left-1/2 -translate-x-1/2">{{ t("dataGenerate.title") }}</span>
-          <div />
+          <div class="flex items-center gap-1.5 text-xs text-muted-foreground">
+            {{ t("dataGenerate.title") }}
+          </div>
         </div>
 
-        <div class="rounded-md border w-full overflow-hidden">
-          <div v-if="generatedResults.length === 0" class="flex h-[420px] items-center justify-center text-xs text-muted-foreground">{{ t("dataGenerate.noData") }}</div>
+        <div class="rounded-md border w-full overflow-hidden flex flex-col min-h-0 mx-2 sm:mx-4" :class="isFullscreen ? 'flex-1' : ''">
+          <div v-if="generatedResults.length === 0" class="flex items-center justify-center text-xs text-muted-foreground" :class="isFullscreen ? 'flex-1' : 'h-[420px]'">
+            {{ t("dataGenerate.noData") }}
+          </div>
           <template v-else>
             <div class="flex items-center justify-between px-3 py-2 border-b bg-muted/10">
               <div class="flex items-center gap-2">
                 <span class="text-xs text-muted-foreground">{{ t("dataGenerate.target") }}:</span>
                 <select v-if="generatedResults.length > 1" v-model="previewTableIndex" class="h-7 rounded border bg-background px-2 text-xs">
-                  <option v-for="(r, i) in generatedResults" :key="i" :value="i">{{ r.tableName }}</option>
+                  <option v-for="(r, i) in generatedResults" :key="i" :value="i">
+                    {{ r.tableName }}
+                  </option>
                 </select>
                 <span v-else class="text-sm font-medium">{{ generatedResults[0].tableName }}</span>
-                <span class="text-xs text-muted-foreground">{{ t("dataGenerate.previewRowCount", { count: currentPreview.rows.length }) }}</span>
+                <span class="text-xs text-muted-foreground">{{
+                  t("dataGenerate.previewRowCount", {
+                    count: currentPreview.rows.length,
+                  })
+                }}</span>
               </div>
               <Button variant="outline" size="sm" class="h-7 text-xs" @click="regenerate">{{ t("dataGenerate.regenerate") }}</Button>
             </div>
-            <div class="flex flex-col h-[380px]">
+            <div class="flex flex-col min-h-0" :class="isFullscreen ? 'flex-1' : 'h-[380px]'">
               <div class="flex-1 overflow-auto overscroll-none bg-background">
                 <table class="w-full text-xs border-collapse" style="table-layout: auto">
                   <thead>
                     <tr class="sticky top-0 z-10 bg-[rgb(239_239_239)] dark:bg-muted/60 border-y border-border">
                       <th class="px-2 py-1.5 border-r border-border text-center text-muted-foreground select-none w-10 shrink-0">#</th>
-                      <th v-for="(col, ci) in currentPreview.columns" :key="col" class="relative px-2 py-1.5 border-r border-border whitespace-nowrap text-left font-medium select-none" :style="{ minWidth: '60px', width: previewColWidths[ci] + 'px' }">
+                      <th
+                        v-for="(col, ci) in currentPreview.columns"
+                        :key="col"
+                        class="relative px-2 py-1.5 border-r border-border whitespace-nowrap text-left font-medium select-none"
+                        :style="{
+                          minWidth: '60px',
+                          width: previewColWidths[ci] + 'px',
+                        }"
+                      >
                         {{ col }}
                         <div class="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-primary/30" @mousedown.stop="onPreviewColResizeStart(ci, $event)" @dblclick.stop="delete previewColWidths[ci]" />
                       </th>
                     </tr>
                   </thead>
                   <tbody>
-                    <tr v-for="(row, ri) in currentPreview.rows.slice(0, 50)" :key="ri" class="border-b border-border" :class="{ 'bg-muted/30': ri % 2 === 1 }">
-                      <td class="data-grid-row-number px-2 py-1 border-r border-border text-center text-muted-foreground select-none text-xs">{{ ri + 1 }}</td>
+                    <tr
+                      v-for="(row, ri) in currentPreview.rows.slice(0, 50)"
+                      :key="ri"
+                      class="border-b border-border"
+                      :class="{
+                        'bg-muted/30': ri % 2 === 1,
+                      }"
+                    >
+                      <td class="data-grid-row-number px-2 py-1 border-r border-border text-center text-muted-foreground select-none text-xs">
+                        {{ ri + 1 }}
+                      </td>
                       <td
                         v-for="(cell, ci) in row"
                         :key="ci"
                         class="px-3 py-1 border-r border-border whitespace-nowrap overflow-hidden text-ellipsis select-none font-mono"
-                        :style="{ maxWidth: (previewColWidths[ci] ?? 120) + 'px' }"
-                        :class="{ 'text-muted-foreground italic': cell === null || cell === undefined }"
+                        :style="{
+                          maxWidth: (previewColWidths[ci] ?? 120) + 'px',
+                        }"
+                        :class="{
+                          'text-muted-foreground italic': cell === null || cell === undefined,
+                        }"
                       >
                         {{ displayPreviewCell(cell) }}
                       </td>
                     </tr>
                   </tbody>
                 </table>
-                <div v-if="currentPreview.rows.length > 50" class="sticky left-0 text-xs text-muted-foreground px-3 py-1.5 border-t border-border bg-background">{{ t("dataGenerate.first50Rows", { count: currentPreview.rows.length }) }}</div>
+                <div v-if="currentPreview.rows.length > 50" class="sticky left-0 text-xs text-muted-foreground px-3 py-1.5 border-t border-border bg-background">
+                  {{
+                    t("dataGenerate.first50Rows", {
+                      count: currentPreview.rows.length,
+                    })
+                  }}
+                </div>
               </div>
             </div>
           </template>
@@ -969,26 +1121,44 @@ async function onFileSelected(event: Event) {
       </template>
 
       <template v-else-if="currentStep === 'result'">
-        <div class="rounded-md border">
-          <div class="border-b bg-muted/10 px-4 py-2 text-sm font-medium">{{ t("dataGenerate.resultTitle") }}</div>
-          <div class="divide-y max-h-[400px] overflow-y-auto">
+        <div class="rounded-md border mx-2 mb-3 flex min-h-0 flex-col sm:mx-4" :class="isFullscreen ? 'flex-1' : ''">
+          <div class="border-b bg-muted/10 px-4 py-2 text-sm font-medium">
+            {{ t("dataGenerate.resultTitle") }}
+          </div>
+          <div class="divide-y overflow-y-auto min-h-0" :class="isFullscreen ? 'flex-1' : 'max-h-[400px]'">
             <div v-for="r in executeResults" :key="r.table" class="px-4 py-3 text-xs">
               <div class="flex items-center justify-between">
                 <span class="font-medium truncate">{{ r.table }}</span>
                 <span class="flex items-center gap-3 shrink-0">
-                  <span class="text-green-600 dark:text-green-400">{{ t("dataGenerate.successLabel", { count: r.ok }) }}</span>
-                  <span v-if="r.err > 0" class="text-destructive">{{ t("dataGenerate.failLabel", { count: r.err }) }}</span>
-                  <span class="text-muted-foreground">{{ t("dataGenerate.totalLabel", { count: r.total }) }}</span>
+                  <span class="text-green-600 dark:text-green-400">{{
+                    t("dataGenerate.successLabel", {
+                      count: r.ok,
+                    })
+                  }}</span>
+                  <span v-if="r.err > 0" class="text-destructive">{{
+                    t("dataGenerate.failLabel", {
+                      count: r.err,
+                    })
+                  }}</span>
+                  <span class="text-muted-foreground">{{
+                    t("dataGenerate.totalLabel", {
+                      count: r.total,
+                    })
+                  }}</span>
                 </span>
               </div>
-              <div v-if="r.error" class="mt-1 text-destructive/80 break-all leading-relaxed">{{ r.error }}</div>
+              <div v-if="r.error" class="mt-1 text-destructive/80 break-all leading-relaxed">
+                {{ r.error }}
+              </div>
             </div>
           </div>
-          <div v-if="executeResults.length === 0" class="flex h-24 items-center justify-center text-xs text-muted-foreground">{{ t("dataGenerate.noResult") }}</div>
+          <div v-if="executeResults.length === 0" class="flex h-24 items-center justify-center text-xs text-muted-foreground">
+            {{ t("dataGenerate.noResult") }}
+          </div>
         </div>
       </template>
 
-      <DialogFooter class="flex items-center justify-between border-t pt-3 sm:justify-between">
+      <DialogFooter class="flex shrink-0 items-center justify-between border-t pt-3 mx-2 mt-auto sm:mx-4 sm:justify-between">
         <div class="flex items-center gap-2">
           <template v-if="currentStep === 'config'">
             <Button variant="outline" size="sm" class="h-7 text-xs" @click="saveProfile">
@@ -1036,7 +1206,7 @@ async function onFileSelected(event: Event) {
         </div>
       </DialogFooter>
       <input ref="fileInputRef" type="file" accept="application/json,.json" class="hidden" @change="onFileSelected" />
-    </DialogScrollContent>
+    </DialogContent>
 
     <Dialog v-model:open="optionsDialogOpen">
       <DialogContent class="max-w-sm">
@@ -1056,7 +1226,12 @@ async function onFileSelected(event: Event) {
             <input type="checkbox" v-model="generateOptions.useTransaction" class="h-4 w-4 accent-primary" />
             <span class="text-xs">{{ t("dataGenerate.useTransaction") }}</span>
           </label>
-          <label class="flex items-center gap-3 cursor-pointer" :class="{ 'cursor-not-allowed opacity-50': !supportsExtendedInsert }">
+          <label
+            class="flex items-center gap-3 cursor-pointer"
+            :class="{
+              'cursor-not-allowed opacity-50': !supportsExtendedInsert,
+            }"
+          >
             <input type="checkbox" v-model="generateOptions.extendedInsert" class="h-4 w-4 accent-primary" :disabled="!supportsExtendedInsert" />
             <span class="text-xs">{{ t("dataGenerate.extendedInsert") }}</span>
           </label>
@@ -1085,7 +1260,9 @@ async function onFileSelected(event: Event) {
             </button>
           </div>
         </div>
-        <div v-if="tableOrder.length === 0" class="py-8 text-center text-xs text-muted-foreground">{{ t("dataGenerate.noTablesSelected") }}</div>
+        <div v-if="tableOrder.length === 0" class="py-8 text-center text-xs text-muted-foreground">
+          {{ t("dataGenerate.noTablesSelected") }}
+        </div>
         <DialogFooter>
           <Button size="sm" class="h-7 text-xs" @click="orderDialogOpen = false">{{ t("dataGenerate.ok") }}</Button>
         </DialogFooter>

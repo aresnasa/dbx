@@ -49,7 +49,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import LightTooltip from "@/components/ui/LightTooltip.vue";
-import type { ColumnInfo, ConnectionConfig, DatabaseType, TreeNode, TriggerInfo } from "@/types/database";
+import type { ColumnInfo, ConnectionConfig, DatabaseType, TreeNode } from "@/types/database";
 import { alignedCommentLeadingWidth, canTreeNodePin, canTreeNodeShowExpander, sidebarTreeNodeComment, trailingCommentAvailableWidth, trailingCommentGapPx, treeItemPaddingLeft, treeLabelWidthClass, usesFullWidthTreeLabel } from "@/lib/sidebar/sidebarTreeItemLayout";
 import { clearActiveTableReferencePayload, createTableReferencePayload, createTableReferenceDropEvent, setActiveTableReferencePayload, type QueryEditorTableReferencePayload } from "@/lib/editor/queryEditorTableDrop";
 import { formatSidebarObjectStorage } from "@/lib/sidebar/sidebarDatabaseStorage";
@@ -451,24 +451,6 @@ const detailTooltip = computed(() => {
     ].filter((row) => row.value);
     return { rows };
   }
-  if (node.type === "trigger" && node.meta && node.connectionId && effectiveDatabaseTypeForConnection(connectionStore.getConfig(node.connectionId)) === "xugu") {
-    const trigger = node.meta as TriggerInfo;
-    const hasXuguDetails = trigger.level != null || trigger.condition != null || trigger.language != null || trigger.enabled != null || trigger.valid != null || trigger.created_at != null || trigger.comment != null;
-    if (!hasXuguDetails) return null;
-    const rows: DetailTooltipRow[] = [
-      { label: t("objects.name"), value: visibleLabel(node) },
-      { label: t("objects.triggerTiming"), value: cleanTooltipValue(trigger.timing) },
-      { label: t("objects.triggerEvent"), value: cleanTooltipValue(trigger.event) },
-      { label: t("objects.triggerLevel"), value: cleanTooltipValue(trigger.level) },
-      { label: t("objects.triggerStatus"), value: trigger.enabled == null ? "" : t(trigger.enabled ? "objects.enabled" : "objects.disabled") },
-      { label: t("objects.validity"), value: trigger.valid == null ? "" : t(trigger.valid ? "objects.valid" : "objects.invalid") },
-      { label: t("objects.triggerCondition"), value: cleanTooltipValue(trigger.condition), multiline: true },
-      { label: t("objects.triggerLanguage"), value: cleanTooltipValue(trigger.language) },
-      { label: t("objects.createdAt"), value: cleanTooltipValue(trigger.created_at) },
-      { label: t("objects.comment"), value: cleanTooltipValue(trigger.comment), multiline: true },
-    ].filter((row) => row.value);
-    return rows.length ? { rows } : null;
-  }
   const comment = node.type === "column" && node.meta && "comment" in node.meta ? (node.meta as ColumnInfo).comment : node.comment;
   if (!comment || (node.type !== "schema" && node.type !== "table" && node.type !== "view" && node.type !== "column")) return null;
   const rows: DetailTooltipRow[] = [
@@ -576,7 +558,7 @@ const canExpand = computed(() =>
   canTreeNodeShowExpander({
     type: activeNode.value.type,
     childCount: activeNode.value.children?.length ?? 0,
-    explicitContainer: (activeNode.value.type === "package" && activeNode.value.children !== undefined) || activeNode.value.xuguTypeMembersExpandable === true,
+    explicitContainer: activeNode.value.children !== undefined,
   }),
 );
 

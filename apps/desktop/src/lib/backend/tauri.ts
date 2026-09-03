@@ -3523,14 +3523,13 @@ export async function mongoInsertDocument(connectionId: string, database: string
   return documentInsertDocument(connectionId, database, collection, docJson, routing);
 }
 
-export async function documentInsertDocument(connectionId: string, database: string, collection: string, docJson: string, routing?: string, preserveBsonTypes?: boolean): Promise<string> {
+export async function documentInsertDocument(connectionId: string, database: string, collection: string, docJson: string, routing?: string): Promise<string> {
   return invoke("document_insert_document", {
     connectionId,
     database,
     collection,
     docJson,
     routing,
-    preserveBsonTypes,
   });
 }
 

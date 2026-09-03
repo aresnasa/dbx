@@ -105,7 +105,6 @@ export interface CompletionAssistantRequest {
   search_in_definitions?: boolean;
   parent_schema?: string | null;
   parent_name?: string | null;
-  parent_type?: "package" | "type" | null;
   match_mode?: CompletionAssistantMatchMode | null;
 }
 
@@ -434,8 +433,6 @@ export interface ObjectInfo {
   updated_at?: string | null;
   parent_schema?: string | null;
   parent_name?: string | null;
-  trigger?: TriggerInfo | null;
-  xugu_type_members_expandable?: boolean | null;
 }
 
 export interface ObjectStatistics {
@@ -504,13 +501,6 @@ export interface TriggerInfo {
   name: string;
   event: string;
   timing: string;
-  level?: string | null;
-  condition?: string | null;
-  language?: string | null;
-  enabled?: boolean | null;
-  valid?: boolean | null;
-  comment?: string | null;
-  created_at?: string | null;
   statement?: string | null;
 }
 
@@ -839,8 +829,6 @@ export type TreeNodeType =
   | "table-search-control"
   | "load-more"
   | "column"
-  | "type-attribute"
-  | "type-method"
   | "index"
   | "fkey"
   | "trigger"
@@ -902,12 +890,10 @@ export interface TreeNode {
   tableName?: string;
   objectName?: string;
   signature?: string;
-  /** Owning programmable object for a nested metadata member. */
+  /** Owning package/type for nested routine members. */
   parentName?: string;
   parentSchema?: string;
   parentType?: TreeNodeType;
-  /** Set only for XuguDB object types whose members can be loaded lazily. */
-  xuguTypeMembersExpandable?: boolean;
   tableType?: string;
   comment?: string | null;
   valid?: boolean | null;

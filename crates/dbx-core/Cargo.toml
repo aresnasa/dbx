@@ -5,7 +5,13 @@ edition = "2021"
 license = "Apache-2.0"
 
 [features]
-default = ["duckdb-sidecar", "mq-admin", "sqlite-sqlcipher", "system-fonts"]
+# PATCHED for RusTerm integration: removed `mq-admin`, `system-fonts`,
+# `duckdb-sidecar`, and `sqlite-sqlcipher` from default features.
+# - mq-admin requires a patched rumqttc (MQTT 3.1) that we don't activate.
+# - system-fonts pulls in font-kit for desktop UI fonts (RusTerm uses Dioxus).
+# - duckdb-sidecar: RusTerm has its own duckdb via rusterm-analytics.
+# - sqlite-sqlcipher: RusTerm uses plain rusqlite.
+default = []
 duckdb-sidecar = []
 mq-admin = ["dep:rumqttc"]
 sqlite-sqlcipher = ["rusqlite/bundled-sqlcipher-vendored-openssl"]
@@ -39,7 +45,18 @@ tokio-postgres = { version = "0.7", features = ["with-chrono-0_4", "with-uuid-1"
 deadpool-postgres = { version = "0.14", features = ["rt_tokio_1"] }
 tokio-postgres-rustls = "0.13"
 webpki-roots = "0.26"
-rusqlite = { version = "0.32", features = ["bundled", "load_extension", "backup", "functions", "column_decltype"] }
+# PATCHED for RusTerm integration: bumped from 0.32 → 0.37 to match RusTerm's
+# workspace rusqlite. Cargo forbids two `links = "sqlite3"` crates in the
+# same graph, so both must use the same libsqlite3-sys. Features merged:
+# original (load_extension, backup, column_decltype) + RusTerm's (vtab).
+rusqlite = { version = "0.38", features = ["bundled", "load_extension", "backup", "functions", "column_decltype", "vtab"] }
+# PATCHED for RusTerm integration: bumped from 0.60 → 0.62 to match RusTerm's
+# russh (0.62 is required so the stable curve25519-dalek/ed25519-dalek/ecdsa
+# requirements can coexist with the vendored picky used by ironrdp-connector).
+# russh 0.61.x required RustCrypto pre-releases (=5.0.0-rc.0 curve25519-dalek
+# etc.); 0.62 switched to stable series ("5"/"3"/"0.17"), which also keeps
+# pkcs5 ^0.8 stable — same constraint as before: one pkcs5 in the graph.
+russh = { version = "0.62", features = ["aws-lc-rs"] }
 mysql_async = { version = "0.37", default-features = false, features = ["default-rustls", "client_ed25519", "chrono", "rust_decimal"] }
 sqlparser = { version = "0.62.0", features = ["visitor"] }
 redis = { version = "0.32.2", features = ["tokio-comp", "tls-rustls", "tls-rustls-insecure", "tokio-rustls-comp", "sentinel", "cluster-async"] }
@@ -51,7 +68,6 @@ prometheus-parse = "=0.2.5"
 futures = "0.3"
 mongodb = "3.2.5"
 rumqttc = { version = "0.24", features = ["websocket"], optional = true }
-russh = "0.60"
 pageant = "0.2"
 portpicker = "0.1.1"
 csv = "1"

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use log::warn;
-use rusqlite::{params, params_from_iter, types::Value, Connection, DatabaseName, OpenFlags, OptionalExtension, ToSql};
+use rusqlite::{params, params_from_iter, types::Value, Connection, OpenFlags, OptionalExtension, ToSql, MAIN_DB}; // PATCHED: DatabaseName → MAIN_DB for rusqlite 0.37
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -129,9 +129,7 @@ pub fn maybe_import_user_data_db(
     }
 
     std::fs::create_dir_all(target_data_dir).map_err(|e| format!("Failed to create data dir: {e}"))?;
-    source_conn
-        .backup(DatabaseName::Main, &target_db_path, None)
-        .map_err(|e| format!("Failed to import user data db: {e}"))?;
+    source_conn.backup(MAIN_DB, &target_db_path, None).map_err(|e| format!("Failed to import user data db: {e}"))?;
 
     Ok(DataDbImportResult::Imported)
 }
@@ -3267,7 +3265,9 @@ impl Storage {
         let key = key.to_string();
         self.with_conn(move |conn| {
             conn.prepare("SELECT version FROM state_store WHERE key = ?1")
-                .and_then(|mut stmt| stmt.query_row(params![key], |row| row.get(0)).optional())
+                .and_then(|mut stmt| {
+                    stmt.query_row(params![key], |row| row.get::<_, i64>(0).map(|v| v as u64)).optional()
+                })
                 .map_err(|e| e.to_string())
         })
         .await
@@ -3286,7 +3286,7 @@ impl Storage {
         self.with_conn(move |conn| {
             let current: Option<u64> = conn
                 .prepare("SELECT version FROM state_store WHERE key = ?1")
-                .and_then(|mut stmt| stmt.query_row(params![&key], |row| row.get(0)).optional())
+                .and_then(|mut stmt| stmt.query_row(params![&key], |row| row.get::<_, i64>(0).map(|v| v as u64)).optional())
                 .map_err(|e| e.to_string())?;
 
             match (current, expected_version) {
@@ -3301,7 +3301,7 @@ impl Storage {
                 (Some(v), Some(expected)) if v == expected => {
                     conn.execute(
                         "UPDATE state_store SET value = ?1, content_type = ?2, version = version + 1 WHERE key = ?3 AND version = ?4",
-                        params![new_value, content_type, key, expected],
+                        params![new_value, content_type, key, expected as i64],
                     )
                     .map(|rows| rows > 0)
                     .map_err(|e| e.to_string())

@@ -1487,7 +1487,8 @@ fn sqlite_completion_tables(
     let mut params: Vec<&dyn rusqlite::ToSql> =
         type_filters.iter().map(|value| value as &dyn rusqlite::ToSql).collect();
     params.push(&pattern);
-    params.push(&limit);
+    let limit_i64 = limit as i64;
+    params.push(&limit_i64);
     let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map(params.as_slice(), |row| {
@@ -2345,13 +2346,6 @@ pub async fn list_triggers(pool: &SqliteHandle, schema: &str, table: &str) -> Re
                         name: row.get("name")?,
                         event: event.to_string(),
                         timing: timing.to_string(),
-                        level: None,
-                        condition: None,
-                        language: None,
-                        enabled: None,
-                        valid: None,
-                        comment: None,
-                        created_at: None,
                         statement: sql_text,
                     })
                 })

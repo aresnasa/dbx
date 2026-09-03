@@ -30,17 +30,6 @@ pub struct MqConnectOverride {
     pub port: u16,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MqSocksProxy {
-    pub host: String,
-    pub port: u16,
-    #[serde(default)]
-    pub username: String,
-    #[serde(default)]
-    pub password: String,
-}
-
 /// Configuration for an MQ admin connection, decoded from
 /// `ConnectionConfig.external_config`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,8 +60,6 @@ pub struct MqAdminConfig {
     /// its Management HTTP API listens on an independently configured port.
     #[serde(skip)]
     pub management_connect_override: Option<MqConnectOverride>,
-    #[serde(skip)]
-    pub socks_proxy: Option<MqSocksProxy>,
     /// Runtime-only: from `ConnectionConfig.query_timeout_secs` (`0` = unlimited).
     #[serde(skip)]
     pub query_timeout_secs: u64,
@@ -152,16 +139,6 @@ impl MqAdminConfig {
 
     pub fn with_management_connect_override(mut self, host: &str, port: u16) -> Self {
         self.management_connect_override = Some(MqConnectOverride { host: host.to_string(), port });
-        self
-    }
-
-    pub fn with_socks_proxy(mut self, host: &str, port: u16, username: &str, password: &str) -> Self {
-        self.socks_proxy = Some(MqSocksProxy {
-            host: host.to_string(),
-            port,
-            username: username.to_string(),
-            password: password.to_string(),
-        });
         self
     }
 }

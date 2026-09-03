@@ -430,7 +430,6 @@ pub async fn mongo_insert_document(
         collection,
         doc_json,
         routing,
-        None,
     )
     .await
 }

@@ -562,15 +562,39 @@ const cityData: Record<string, { en: string; native: string }[]> = {
 };
 
 // Country / region data
-const countryData: Array<{ code: string; en: string; zh: string; zh_hant: string; ja: string }> = [
-  { code: "US", en: "United States", zh: "美国", zh_hant: "美國", ja: "アメリカ合衆国" },
+const countryData: Array<{
+  code: string;
+  en: string;
+  zh: string;
+  zh_hant: string;
+  ja: string;
+}> = [
+  {
+    code: "US",
+    en: "United States",
+    zh: "美国",
+    zh_hant: "美國",
+    ja: "アメリカ合衆国",
+  },
   { code: "CN", en: "China", zh: "中国", zh_hant: "中國", ja: "中国" },
   { code: "JP", en: "Japan", zh: "日本", zh_hant: "日本", ja: "日本" },
-  { code: "GB", en: "United Kingdom", zh: "英国", zh_hant: "英國", ja: "イギリス" },
+  {
+    code: "GB",
+    en: "United Kingdom",
+    zh: "英国",
+    zh_hant: "英國",
+    ja: "イギリス",
+  },
   { code: "DE", en: "Germany", zh: "德国", zh_hant: "德國", ja: "ドイツ" },
   { code: "FR", en: "France", zh: "法国", zh_hant: "法國", ja: "フランス" },
   { code: "CA", en: "Canada", zh: "加拿大", zh_hant: "加拿大", ja: "カナダ" },
-  { code: "AU", en: "Australia", zh: "澳大利亚", zh_hant: "澳洲", ja: "オーストラリア" },
+  {
+    code: "AU",
+    en: "Australia",
+    zh: "澳大利亚",
+    zh_hant: "澳洲",
+    ja: "オーストラリア",
+  },
   { code: "IN", en: "India", zh: "印度", zh_hant: "印度", ja: "インド" },
   { code: "BR", en: "Brazil", zh: "巴西", zh_hant: "巴西", ja: "ブラジル" },
   { code: "RU", en: "Russia", zh: "俄罗斯", zh_hant: "俄羅斯", ja: "ロシア" },
@@ -1119,15 +1143,118 @@ const GeneratorFunctions: Record<string, (params?: GeneratorParams) => string> =
   hostname: (params) => generateHostname(params),
 };
 
+// ── Column type family matching ─────────────────────────────────────────────
+// The same raw type string means different things per database: TDengine
+// BINARY/NCHAR are string types while MySQL BINARY is a byte string, Oracle
+// DATE carries a time component, and PostgreSQL stores booleans as a real
+// BOOL (which rejects a bare `1` literal). Data generation therefore has to
+// match the column type family *with the connection's database type* before
+// falling back to column-name heuristics.
+
+export type ColumnTypeFamily = "integer" | "decimal" | "boolean" | "date" | "datetime" | "time" | "text" | "binary" | "uuid" | "json" | "enum" | "unknown";
+
+const POSTGRES_LIKE_TYPES = new Set<DatabaseType>(["postgres", "opengauss", "gaussdb", "kingbase", "highgo", "uxdb", "vastbase", "redshift"]);
+const ORACLE_LIKE_TYPES = new Set<DatabaseType>(["oracle", "oceanbase-oracle", "dameng", "yashandb"]);
+
+function isPostgresLikeDatabase(databaseType?: DatabaseType): boolean {
+  return !!databaseType && POSTGRES_LIKE_TYPES.has(databaseType);
+}
+
+const INTEGER_TYPE_NAMES = new Set(["int", "integer", "int2", "int4", "int8", "int16", "int32", "int64", "tinyint", "smallint", "mediumint", "bigint", "uint8", "uint16", "uint32", "uint64", "serial", "serial2", "serial4", "serial8", "smallserial", "bigserial", "year"]);
+const DECIMAL_TYPE_NAMES = new Set(["number", "numeric", "decimal", "dec", "decimalv", "float", "float4", "float8", "float32", "float64", "real", "double", "double precision", "money", "smallmoney"]);
+const TEXT_TYPE_NAMES = new Set(["char", "nchar", "varchar", "nvarchar", "varchar2", "nvarchar2", "bpchar", "character", "character varying", "string", "text", "tinytext", "mediumtext", "longtext", "ntext", "clob", "nclob", "long", "memo", "fixedstring"]);
+const DATETIME_TYPE_NAMES = new Set(["datetime", "datetime2", "smalldatetime", "timestamp", "timestamptz", "timestamp with time zone", "timestamp with local time zone", "timestamp without time zone", "datetime64"]);
+const TIME_TYPE_NAMES = new Set(["time", "timetz", "time with time zone", "time without time zone"]);
+const BINARY_TYPE_NAMES = new Set(["binary", "varbinary", "blob", "tinyblob", "mediumblob", "longblob", "longblob", "bytea", "raw", "long raw", "image", "binary varying"]);
+
+/**
+ * Classify a raw column `data_type` (as reported by the backend metadata) into
+ * a semantic family, taking the connection's database type into account.
+ * Callers should treat the result as the *primary* signal for picking a data
+ * generator; column-name heuristics only refine text-like columns.
+ */
+export function columnTypeFamily(dataType: string, databaseType?: DatabaseType): ColumnTypeFamily {
+  const normalized = dataType
+    .trim()
+    .toLowerCase()
+    .replace(/\s*\([^)]*\)\s*$/, "")
+    .replace(/\s+(unsigned|zerofill)\b/g, "")
+    .replace(/\s+/g, " ");
+  if (!normalized) return "unknown";
+
+  // TDengine: BINARY/NCHAR are VARCHAR-like string types, not byte strings.
+  if (databaseType === "tdengine") {
+    if (normalized === "timestamp") return "datetime";
+    if (normalized === "bool") return "boolean";
+    if (normalized === "binary" || normalized === "nchar" || normalized === "varchar" || normalized === "text") return "text";
+    if (INTEGER_TYPE_NAMES.has(normalized)) return "integer";
+    if (DECIMAL_TYPE_NAMES.has(normalized) || normalized === "double") return "decimal";
+    if (normalized === "json") return "json";
+  }
+
+  if (normalized === "uuid" || normalized === "uniqueidentifier" || normalized === "guid") return "uuid";
+  if (normalized === "json" || normalized === "jsonb") return "json";
+  if (normalized === "bool" || normalized === "boolean") return "boolean";
+  if (databaseType === "sqlserver" && normalized === "bit") return "boolean";
+
+  if (normalized.startsWith("interval")) return "text";
+  if (normalized.startsWith("timestamp")) return "datetime";
+  if (normalized.startsWith("enum")) return "enum";
+
+  if (normalized === "date") {
+    // Oracle-family DATE always carries a time component.
+    if (ORACLE_LIKE_TYPES.has(databaseType as DatabaseType)) return "datetime";
+    return "date";
+  }
+  if (DATETIME_TYPE_NAMES.has(normalized)) return "datetime";
+  if (TIME_TYPE_NAMES.has(normalized) || normalized.startsWith("time")) return "time";
+
+  if (INTEGER_TYPE_NAMES.has(normalized)) return "integer";
+  if (DECIMAL_TYPE_NAMES.has(normalized)) return "decimal";
+
+  if (TEXT_TYPE_NAMES.has(normalized) || normalized.includes("char") || normalized.includes("text") || normalized.includes("clob")) return "text";
+  if (BINARY_TYPE_NAMES.has(normalized) || normalized.includes("blob") || normalized.includes("binary")) return "binary";
+  return "unknown";
+}
+
+/** Whether the database stores real booleans that accept TRUE/FALSE literals. */
+export function databaseAcceptsBooleanLiterals(databaseType?: DatabaseType): boolean {
+  return isPostgresLikeDatabase(databaseType);
+}
+
+/**
+ * Whether a table's `table_type` (as reported by `list_tables`) can receive
+ * generated INSERT data. Views and materialized views are excluded — they are
+ * virtual projections, and inserting generated rows into them is either
+ * rejected by the server or silently mutates the underlying table.
+ */
+export function isInsertableTableType(tableType?: string | null): boolean {
+  const normalized = (tableType ?? "").trim().toUpperCase();
+  if (!normalized) return true;
+  return !normalized.includes("VIEW");
+}
+
 const KnownColumnPatterns: Array<{ pattern: RegExp; generatorKey: string }> = [
   { pattern: /email|e-?mail|mail/i, generatorKey: "email" },
   { pattern: /phone|tel|mobile|cell|fax|telephone/i, generatorKey: "phone" },
-  { pattern: /id.?card|idcard|身份证|id.?number|证件号|证件|passport|护照|social.?credit|统一社会|信用代码/i, generatorKey: "id_number" },
+  {
+    pattern: /id.?card|idcard|身份证|id.?number|证件号|证件|passport|护照|social.?credit|统一社会|信用代码/i,
+    generatorKey: "id_number",
+  },
   { pattern: /bank.?card|银行卡|bank.?account/i, generatorKey: "id_number" },
-  { pattern: /driver.?license|drivers?|驾驶证|驾照/i, generatorKey: "id_number" },
+  {
+    pattern: /driver.?license|drivers?|驾驶证|驾照/i,
+    generatorKey: "id_number",
+  },
   { pattern: /first.?name|fname|given.?name/i, generatorKey: "full_name" },
-  { pattern: /last.?name|lname|surname|family.?name/i, generatorKey: "full_name" },
-  { pattern: /full.?name|name|user.?name|username|nickname|nick.?name/i, generatorKey: "full_name" },
+  {
+    pattern: /last.?name|lname|surname|family.?name/i,
+    generatorKey: "full_name",
+  },
+  {
+    pattern: /full.?name|name|user.?name|username|nickname|nick.?name/i,
+    generatorKey: "full_name",
+  },
   { pattern: /gender|sex/i, generatorKey: "gender" },
   { pattern: /city|town|municipality/i, generatorKey: "city" },
   { pattern: /country|province|state|region/i, generatorKey: "city" },
@@ -1138,53 +1265,79 @@ const KnownColumnPatterns: Array<{ pattern: RegExp; generatorKey: string }> = [
   { pattern: /ip.?address|ipv4|ipv6/i, generatorKey: "ip_address" },
   { pattern: /mac.?address|mac$/i, generatorKey: "mac_address" },
   { pattern: /uuid|guid/i, generatorKey: "uuid" },
-  { pattern: /company|corp|organization|org|brand/i, generatorKey: "company_name" },
+  {
+    pattern: /company|corp|organization|org|brand/i,
+    generatorKey: "company_name",
+  },
   { pattern: /department|dept|division/i, generatorKey: "department" },
   { pattern: /color|colour/i, generatorKey: "color" },
   { pattern: /title|position|job.?title|role/i, generatorKey: "job_title" },
-  { pattern: /description|comment|note|summary|bio|content|body|detail|remark|memo|intro|introduction|overview/i, generatorKey: "text" },
+  {
+    pattern: /description|comment|note|summary|bio|content|body|detail|remark|memo|intro|introduction|overview/i,
+    generatorKey: "text",
+  },
   { pattern: /status|state/i, generatorKey: "enum" },
   { pattern: /barcode|upc|ean|qr.?code/i, generatorKey: "barcode" },
   { pattern: /sku/i, generatorKey: "sku" },
   { pattern: /product.?name|product$/i, generatorKey: "product_name" },
-  { pattern: /category|type|kind|classification/i, generatorKey: "product_category" },
+  {
+    pattern: /category|type|kind|classification/i,
+    generatorKey: "product_category",
+  },
   { pattern: /size$/i, generatorKey: "size" },
-  { pattern: /weight|weight.?unit|unit.?weight|weight.?unit|weight.?type/i, generatorKey: "weight_unit" },
+  {
+    pattern: /weight|weight.?unit|unit.?weight|weight.?unit|weight.?type/i,
+    generatorKey: "weight_unit",
+  },
   { pattern: /file.?path|filePath|directory|dir$/i, generatorKey: "file_path" },
-  { pattern: /file.?name|filename|original.?name|file.?original.?name/i, generatorKey: "file_name" },
-  { pattern: /file.?extension|ext$|filetype|file.?type/i, generatorKey: "file_extension" },
+  {
+    pattern: /file.?name|filename|original.?name|file.?original.?name/i,
+    generatorKey: "file_name",
+  },
+  {
+    pattern: /file.?extension|ext$|filetype|file.?type/i,
+    generatorKey: "file_extension",
+  },
   { pattern: /hostname|host$/i, generatorKey: "hostname" },
   { pattern: /version|ver$/i, generatorKey: "text" },
   { pattern: /language|locale$/i, generatorKey: "text" },
   { pattern: /currency|currency.?code|currency.?name/i, generatorKey: "text" },
   { pattern: /slug|permalink|alias|url.?slug|key$/i, generatorKey: "text" },
   { pattern: /tag|keyword|labels|tags$/i, generatorKey: "text" },
-  { pattern: /level|tier|stage|phase|channel|source|platform/i, generatorKey: "text" },
-  { pattern: /owner|creator|author|created_by|updated_by|modified_by|operator|user$/i, generatorKey: "full_name" },
+  {
+    pattern: /level|tier|stage|phase|channel|source|platform/i,
+    generatorKey: "text",
+  },
+  {
+    pattern: /owner|creator|author|created_by|updated_by|modified_by|operator|user$/i,
+    generatorKey: "full_name",
+  },
 ];
 
-export function findGeneratorKey(columnName: string, dataType: string, isAutoIncrement?: boolean): string {
+export function findGeneratorKey(columnName: string, dataType: string, isAutoIncrement?: boolean, databaseType?: DatabaseType, enumValues?: string[] | null): string {
   if (isAutoIncrement) return "sequence";
-  const type = dataType.toLowerCase();
-  const isNumeric = type.includes("int") || type === "smallint" || type === "bigint" || type.includes("bool") || type.includes("decimal") || type.includes("numeric") || type.includes("float") || type.includes("double") || type === "real";
-  const isDateTime = type.includes("date") || type.includes("timestamp") || type === "time";
-  const isBinary = type.includes("binary") || type.includes("blob") || type.includes("bytea");
-  const isBoolType = type === "bool" || type === "boolean" || type === "bit" || type === "tinyint(1)";
-  const isBoolName = /^(is|has|had|can|did|enable|disable|allow|use|visible|deleted|active|flag)[_-]?/i.test(columnName);
-  if (isNumeric || isDateTime || isBinary) {
-    if (type.includes("serial")) return "sequence";
-    if (isBoolType || (isNumeric && isBoolName)) return "enum";
+  // Type-family matching comes first: the table's declared column type is the
+  // contract the generated data must satisfy, so it wins over name heuristics.
+  const family = columnTypeFamily(dataType, databaseType);
+  if (enumValues && enumValues.length > 0) return "enum";
+  if (family === "boolean") return "enum";
+  if (family === "date") return "date";
+  if (family === "datetime") return "datetime";
+  if (family === "time") return "time";
+  if (family === "uuid") return "uuid";
+  if (family === "integer" || family === "decimal") {
     if (/status|state/i.test(columnName)) return "enum";
-    if (isNumeric) return "number";
-    if (type === "time") return "time";
-    if (isDateTime) return "datetime";
-    if (isBinary) return "text";
+    const isBoolName = /^(is|has|had|can|did|enable|disable|allow|use|visible|deleted|active|flag)[_-]?/i.test(columnName);
+    if (isBoolName) return "enum";
+    if (family === "integer" && /serial|identity/i.test(dataType.toLowerCase())) return "sequence";
+    return "number";
   }
+  // Text-like columns: refine by well-known column-name patterns.
   for (const { pattern, generatorKey } of KnownColumnPatterns) {
     if (pattern.test(columnName)) return generatorKey;
   }
-  if (type.includes("char") || type.includes("text") || type.includes("varchar") || type === "clob") return "text";
-  if (type.includes("uuid") || type.includes("guid")) return "uuid";
+  if (family === "binary") return "image";
+  if (family === "enum") return "enum";
   return "text";
 }
 
@@ -1195,11 +1348,14 @@ export interface ColumnAttrs {
   numericPrecision?: number | null;
   numericScale?: number | null;
   characterMaximumLength?: number | null;
+  /** Declared ENUM/SET values from the table schema (MySQL family). */
+  enumValues?: string[] | null;
 }
 
-export function defaultGeneratorParams(_columnName: string, attrs: ColumnAttrs, generatorKey: string): GeneratorParams {
+export function defaultGeneratorParams(_columnName: string, attrs: ColumnAttrs, generatorKey: string, databaseType?: DatabaseType): GeneratorParams {
   const params: GeneratorParams = {};
   const type = attrs.dataType.toLowerCase();
+  const family = columnTypeFamily(attrs.dataType, databaseType);
   const precision = attrs.numericPrecision ?? null;
   const scale = attrs.numericScale ?? null;
   const charLen = attrs.characterMaximumLength ?? null;
@@ -1215,7 +1371,9 @@ export function defaultGeneratorParams(_columnName: string, attrs: ColumnAttrs, 
   }
 
   if (generatorKey === "number") {
-    const isDecimal = type.includes("decimal") || type.includes("numeric") || type.includes("float") || type.includes("double") || type === "real";
+    // Family-based decimal detection covers per-database spellings
+    // (Oracle NUMBER, PG numeric/float8, TDengine DOUBLE, …).
+    const isDecimal = family === "decimal";
     const col = _columnName.toLowerCase();
     const isAmount = /price|amount|total|cost|fee|balance|salary|income|revenue|tax|discount|money|payment|price/i.test(col);
     const isBigAmount = /salary|income|revenue|balance|total/i.test(col);
@@ -1387,14 +1545,23 @@ export function defaultGeneratorParams(_columnName: string, attrs: ColumnAttrs, 
   }
 
   if (generatorKey === "enum") {
-    const t = attrs.dataType.toLowerCase();
-    const isNum = t.includes("int") || t.includes("bool") || t.includes("decimal") || t.includes("numeric") || t.includes("float") || t.includes("double") || t === "real";
-    const isBoolType = t === "bool" || t === "boolean" || t === "bit" || t === "tinyint(1)";
+    // Schema-declared ENUM values win — the generated data must satisfy the
+    // column's declared domain.
+    if (attrs.enumValues && attrs.enumValues.length > 0) {
+      params.values = attrs.enumValues.join("\n");
+      return params;
+    }
     const isBoolName = /^(is|has|had|can|did|enable|disable|allow|use|visible|deleted|active|flag)[_-]?/i.test(_columnName);
-    if (isBoolType || (isNum && isBoolName)) {
-      params.values = "0\n1";
-    } else if (isNum) {
-      params.values = "0\n1\n2";
+    if (family === "boolean") {
+      // Real-boolean databases accept TRUE/FALSE literals; integer-backed
+      // booleans (MySQL tinyint, SQL Server bit) need 0/1.
+      params.values = databaseAcceptsBooleanLiterals(databaseType) ? "true\nfalse" : "0\n1";
+    } else if (family === "integer" || family === "decimal") {
+      if (isBoolName) {
+        params.values = "0\n1";
+      } else {
+        params.values = "0\n1\n2";
+      }
     } else {
       params.values = "A\nB\nC\nD\nE";
     }
@@ -1538,16 +1705,37 @@ export function defaultGeneratorParams(_columnName: string, attrs: ColumnAttrs, 
   return params;
 }
 
-export function getGeneratorCategoryAndLabel(key: string): { category: string; categoryLabel: string; label: string } {
+export function getGeneratorCategoryAndLabel(key: string): {
+  category: string;
+  categoryLabel: string;
+  label: string;
+} {
   const genKey = key.startsWith("general/") ? key.slice(8) : key;
   for (const cat of GeneratorHierarchy) {
     const child = cat.children?.find((c) => c.key === genKey);
-    if (child) return { category: cat.key, categoryLabel: cat.label, label: child.label };
+    if (child)
+      return {
+        category: cat.key,
+        categoryLabel: cat.label,
+        label: child.label,
+      };
   }
   return { category: "general", categoryLabel: "通用", label: key };
 }
 
-export function generateValue(columnName: string, dataType: string, generatorKey: string | undefined, rowIndex: number, params?: GeneratorParams, columnDefault?: string | null): unknown {
+/**
+ * Random binary payload as a raw SQL expression, in the hex-literal dialect of
+ * the target database — MySQL `0x…`, PostgreSQL bytea `'\x…'`, Oracle
+ * `HEXTORAW('…')`, SQL Server `0x…`.
+ */
+function generatedBinaryValue(databaseType?: DatabaseType): GeneratedSqlExpression {
+  const hex = Array.from({ length: 16 }, () => randInt(0, 255).toString(16).padStart(2, "0")).join("");
+  if (isPostgresLikeDatabase(databaseType)) return generatedSqlExpression(`'\\x${hex}'`, `0x${hex}`);
+  if (databaseType === "oracle" || databaseType === "oceanbase-oracle") return generatedSqlExpression(`HEXTORAW('${hex}')`, `0x${hex}`);
+  return generatedSqlExpression(`0x${hex}`);
+}
+
+export function generateValue(columnName: string, dataType: string, generatorKey: string | undefined, rowIndex: number, params?: GeneratorParams, columnDefault?: string | null, databaseType?: DatabaseType): unknown {
   // null / default overrides
   if (params?.includeNull && params.nullPercent && Math.random() * 100 < params.nullPercent) return null;
   const defaultValue = generatedDefaultValue(columnDefault, dataType);
@@ -1557,7 +1745,7 @@ export function generateValue(columnName: string, dataType: string, generatorKey
     if (includeDefault && defaultPercent > 0 && Math.random() * 100 < defaultPercent) return defaultValue;
   }
 
-  const key = generatorKey ?? findGeneratorKey(columnName, dataType);
+  const key = generatorKey ?? findGeneratorKey(columnName, dataType, false, databaseType);
   if ((key === "date" || key === "datetime") && rowIndex === 0) {
     console.log("[dbx:gen] col=%s key=%s start=%j end=%j allDay=%j", columnName, key, params?.start, params?.end, params?.allDay);
   }
@@ -1706,7 +1894,11 @@ export function generateValue(columnName: string, dataType: string, generatorKey
   if (key === "foreign_key") {
     return randInt(params?.min ?? 1, params?.max ?? 500);
   }
-  if (key === "image") return `0x${Array.from({ length: 16 }, () => randInt(0, 255).toString(16).padStart(2, "0")).join("")}`;
+  if (key === "image") {
+    // Folder mode was never wired to a real picker — keep both modes on the
+    // random-hex payload so the generated SQL stays insertable.
+    return generatedBinaryValue(databaseType);
+  }
 
   const fn = GeneratorFunctions[key];
   if (fn) return fn(params);
@@ -1748,16 +1940,34 @@ function formatOracleTemporalValue(value: string, dataType: string): string | nu
   return null;
 }
 
+function formatBooleanValue(value: unknown, databaseType?: DatabaseType, dataType?: string): string | null {
+  // Only interpret values as boolean literals when the column really is a
+  // boolean (PG-family bool / SQL Server bit) — a `1` stored in a MySQL
+  // tinyint stays numeric.
+  if (dataType === undefined || columnTypeFamily(dataType, databaseType) !== "boolean") return null;
+  const truthy = value === true || (typeof value === "string" && ["true", "t", "yes", "1"].includes(value.trim().toLowerCase())) || value === 1;
+  const falsy = value === false || (typeof value === "string" && ["false", "f", "no", "0"].includes(value.trim().toLowerCase())) || value === 0;
+  if (!truthy && !falsy) return null;
+  if (databaseAcceptsBooleanLiterals(databaseType)) return truthy ? "TRUE" : "FALSE";
+  return truthy ? "1" : "0";
+}
+
 export function formatGeneratedValue(value: unknown, databaseType?: DatabaseType, dataType?: string): string {
   if (isGeneratedSqlExpression(value)) return value.sql;
   if (value === null || value === undefined) return "NULL";
   if (typeof value === "number") return String(value);
-  if (typeof value === "boolean") return value ? "1" : "0";
+  if (typeof value === "boolean") {
+    const booleanLiteral = formatBooleanValue(value, databaseType, dataType);
+    if (booleanLiteral) return booleanLiteral;
+    return value ? "1" : "0";
+  }
   const stringValue = String(value);
   if ((databaseType === "oracle" || databaseType === "oceanbase-oracle") && dataType) {
     const temporalValue = formatOracleTemporalValue(stringValue, dataType);
     if (temporalValue) return temporalValue;
   }
+  const booleanLiteral = formatBooleanValue(stringValue, databaseType, dataType);
+  if (booleanLiteral) return booleanLiteral;
   return quoteGeneratedString(stringValue);
 }
 
@@ -1769,6 +1979,9 @@ export function displayGeneratedValue(value: unknown): string {
 
 export interface GenerateResult {
   columns: string[];
+  /** Raw column data types, parallel to `columns` — needed when callers
+   * re-format `rows` into SQL statements later. */
+  columnTypes: string[];
   rows: unknown[][];
   sql: string;
   statements: string[];
@@ -1818,7 +2031,7 @@ export function generateTableData(config: TableGenerateConfig, databaseType?: Da
       if (isTdengineStable && col.isTag && tagValues.has(col.columnName)) {
         return tagValues.get(col.columnName);
       }
-      const value = generateValue(col.columnName, col.dataType, col.generatorKey, i, col.generatorParams, col.isAutoIncrement ? null : col.columnDefault);
+      const value = generateValue(col.columnName, col.dataType, col.generatorKey, i, col.generatorParams, col.isAutoIncrement ? null : col.columnDefault, databaseType);
       if (isTdengineStable && col.isTag) {
         tagValues.set(col.columnName, value);
       }
@@ -1828,7 +2041,12 @@ export function generateTableData(config: TableGenerateConfig, databaseType?: Da
   }
 
   const quotedCols = colNames.map((column) => quoteTableIdentifier(databaseType, column));
-  const targetTable = qualifiedTableName({ databaseType, schema: config.schema, tableName: config.tableName, database: config.database });
+  const targetTable = qualifiedTableName({
+    databaseType,
+    schema: config.schema,
+    tableName: config.tableName,
+    database: config.database,
+  });
   const columnList = quotedCols.join(", ");
   const insertPrefix = `INSERT INTO ${targetTable} (${columnList}) VALUES`;
   const valueRows = rows.map(
@@ -1843,5 +2061,11 @@ export function generateTableData(config: TableGenerateConfig, databaseType?: Da
   const statements = databaseType === "oracle" ? buildOracleInsertStatements(targetTable, columnList, valueRows) : supportsGeneratedMultiRowValues(databaseType) ? [`${insertPrefix}\n${valueRows.join(",\n")};`] : valueRows.map((values) => `${insertPrefix} ${values};`);
   const sql = statements.join("\n");
 
-  return { columns: colNames, rows, sql, statements };
+  return {
+    columns: colNames,
+    columnTypes: shouldAddTbname ? ["varchar", ...config.columns.map((c) => c.dataType)] : config.columns.map((c) => c.dataType),
+    rows,
+    sql,
+    statements,
+  };
 }

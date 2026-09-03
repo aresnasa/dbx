@@ -178,7 +178,7 @@ import { buildDataGridColumnLookupItems, dataGridColumnCommentFor, filterDataGri
 import { uniqueDataGridColumnOrderKeys } from "@/lib/dataGrid/dataGridColumnOrder";
 import { dataGridColumnLayoutScopeKey, TABLE_DATA_GRID_COLUMN_ORDER_CHANGED_EVENT, tableDataGridColumnOrderScopeKey } from "@/lib/dataGrid/dataGridColumnLayoutStorage";
 import { summarizeSelection } from "@/lib/dataGrid/gridSelection";
-import { captureDataGridSelection, restoreDataGridSelection, type PersistedDataGridSelection } from "@/lib/dataGrid/dataGridSelectionPersistence";
+import { captureDataGridSelection, reactivatesCellSelectionAfterRestore, restoreDataGridSelection, type PersistedDataGridSelection } from "@/lib/dataGrid/dataGridSelectionPersistence";
 import { dataGridFrameCoversRow, dataGridSelectionEdgeMask, dataGridSelectionFrameKindAtCell, dataGridSelectionUsesOuterFrame, resolveDataGridSelectionFrames } from "@/lib/dataGrid/dataGridSelectionFrames";
 import {
   createDataGridCellContextMenuItems,
@@ -3874,7 +3874,6 @@ const {
   selectionFocus,
   finishCellSelection,
   extendCellSelection,
-  restoreCellSelectionState,
   cellIsSelected,
   columnIsSelected,
   selectedRangeStart,
@@ -3925,9 +3924,20 @@ function restoreSelectionAfterRefresh(snapshot: PersistedDataGridSelection) {
   } else if (restored.kind === "columns") {
     selectedColumnIndexes.value = new Set(restored.columnIndexes);
   } else if (restored.kind === "range") {
-    restoreCellSelectionState({ anchor: restored.anchor, focus: restored.focus, selectingAll: restored.selectingAll });
+    selectionAnchor.value = restored.anchor;
+    selectionFocus.value = restored.focus;
+    isSelectingAll.value = restored.selectingAll;
   } else {
-    restoreCellSelectionState({ cellKeys: restored.cellKeys });
+    selectedCellKeys.value = restored.cellKeys;
+  }
+
+  // 恢复 range/离散单元格选区后重新激活 cell-selection 拖拽状态机：refresh watcher
+  // 在 restore 前调的 clearCellSelection 已把 isSelectingCells 置 false，而它仅在
+  // beginCellSelection（鼠标按下）时才重新置 true。不在此补偿，则恢复的高亮虽能显示，
+  // 但 extendCellSelection/handleSelectionPointerMove 的 isSelectingCells 守卫会挡住
+  // 拖拽扩展，用户必须重新点一次单元格。行选/列选是独立状态机，不应激活。
+  if (reactivatesCellSelectionAfterRestore(restored)) {
+    isSelectingCells.value = true;
   }
 
   if (restored.kind === "columns") return;
