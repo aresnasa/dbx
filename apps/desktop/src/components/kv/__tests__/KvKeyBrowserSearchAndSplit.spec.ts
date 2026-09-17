@@ -53,7 +53,7 @@ describe("KvKeyBrowser search and split layout", () => {
   });
 
   it("uses a persisted draggable split between the Key tree and details", () => {
-    expect(browserSource).toContain('<Splitpanes class="kv-browser-splitpanes min-h-0 flex-1" @resized="handleKvBrowserSplitResized">');
+    expect(browserSource).toContain('<Splitpanes class="kv-browser-splitpanes min-h-0 flex-1" :horizontal="kvBrowserCompact" @resized="handleKvBrowserSplitResized">');
     expect(browserSource).toContain('<Pane :size="kvBrowserSplitSize" min-size="20" max-size="70">');
     expect(browserSource).toContain('<Pane :size="100 - kvBrowserSplitSize" min-size="30">');
     expect(browserSource).toContain("safeLocalStorageSet(kvBrowserSplitSizeStorageKey, String(size))");

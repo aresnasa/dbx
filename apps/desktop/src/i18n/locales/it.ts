@@ -4540,6 +4540,7 @@ export default withEnglishFallback({
       image: "Image or Binary",
       foreign_key: "Foreign Key",
       uuid: "UUID",
+      json: "JSON",
       regex: "Regex",
       full_name: "Full Name",
       gender: "Gender",

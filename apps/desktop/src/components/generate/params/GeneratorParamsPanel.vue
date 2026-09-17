@@ -15,6 +15,7 @@ import TextParams from "./TextParams.vue";
 import ImageBinaryParams from "./ImageBinaryParams.vue";
 import ForeignKeyParams from "./ForeignKeyParams.vue";
 import UuidParams from "./UuidParams.vue";
+import JsonParams from "./JsonParams.vue";
 import RegexParams from "./RegexParams.vue";
 import FullNameParams from "./FullNameParams.vue";
 import GenderParams from "./GenderParams.vue";
@@ -78,6 +79,7 @@ const componentMap: Record<string, any> = {
   image: ImageBinaryParams,
   foreign_key: ForeignKeyParams,
   uuid: UuidParams,
+  json: JsonParams,
   regex: RegexParams,
   full_name: FullNameParams,
   gender: GenderParams,

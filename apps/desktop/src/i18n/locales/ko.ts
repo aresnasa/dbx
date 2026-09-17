@@ -4267,6 +4267,7 @@ export default withEnglishFallback({
       image: "이미지 또는 바이너리",
       foreign_key: "외래 키",
       uuid: "UUID",
+      json: "JSON",
       regex: "정규 표현식",
       full_name: "전체 이름",
       gender: "성별",

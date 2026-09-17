@@ -1614,6 +1614,18 @@ html.dbx-data-grid-native-selection-blocked [role="textbox"] * {
 }
 
 @media (min-width: 768px) {
+  html.dbx-legacy-webview .md\:flex-row {
+    flex-direction: row !important;
+  }
+
+  html.dbx-legacy-webview .md\:h-auto {
+    height: auto !important;
+  }
+
+  html.dbx-legacy-webview .md\:w-64 {
+    width: 16rem !important;
+  }
+
   html.dbx-legacy-webview .md\:w-full {
     width: 100% !important;
   }
@@ -1727,6 +1739,11 @@ html.dbx-legacy-webview [data-slot="dialog-positioner"] {
   pointer-events: none !important;
 }
 
+/* Explicit fullscreen positioning must override the legacy default gutter. */
+html.dbx-legacy-webview [data-slot="dialog-positioner"].p-0 {
+  padding: 0 !important;
+}
+
 html.dbx-legacy-webview [data-slot="dialog-content"] {
   width: calc(100vw - 2rem);
   max-width: 24rem;
@@ -1739,6 +1756,27 @@ html.dbx-legacy-webview [data-slot="dialog-content"] {
 html.dbx-legacy-webview.dark [data-slot="dialog-content"] {
   border-color: rgba(110, 110, 114, 0.28) !important;
   box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+}
+
+/* The table-import wizard is rendered inside RusTerm's legacy Servo surface.
+ * Give it a semantic fallback instead of relying on arbitrary Tailwind class
+ * selectors: the dialog must have a definite flex height so only its middle
+ * section scrolls, while its header/footer remain visible. */
+html.dbx-legacy-webview [data-slot="dialog-content"].dbx-table-import-dialog {
+  display: flex !important;
+  flex-direction: column !important;
+  width: calc(100vw - 2rem) !important;
+  height: 760px !important;
+  max-width: 980px !important;
+  max-height: calc(var(--dbx-viewport-height) - 2rem) !important;
+  overflow: hidden !important;
+}
+
+html.dbx-legacy-webview [data-slot="dialog-content"].dbx-table-import-dialog--fullscreen {
+  width: 100vw !important;
+  height: var(--dbx-viewport-height) !important;
+  max-width: 100vw !important;
+  max-height: var(--dbx-viewport-height) !important;
 }
 
 html.dbx-legacy-webview [data-slot="dialog-content"][class~="max-w-sm"] {

@@ -41,10 +41,14 @@ const open = defineModel<boolean>("open", { default: false });
 // Fullscreen page support (native window fullscreen in Tauri, Fullscreen API on web).
 const { isFullscreen, toggleFullscreen, exitFullscreenIfOwned } = useDialogFullscreen();
 const dialogStyle = computed(() => {
-  if (isFullscreen.value) {
-    return { width: "100%", height: "100%", maxWidth: "100%", maxHeight: "100%", borderRadius: "0" };
-  }
-  return { width: "min(980px, calc(100vw - 2rem))" };
+  if (!isFullscreen.value) return undefined;
+  return {
+    width: "100vw",
+    height: "var(--dbx-viewport-height)",
+    maxWidth: "100vw",
+    maxHeight: "var(--dbx-viewport-height)",
+    borderRadius: "0",
+  };
 });
 watch(open, (val) => {
   if (!val) {
@@ -1025,8 +1029,8 @@ watch(rawProgressPercent, (percent) => {
 <template>
   <Dialog v-model:open="open">
     <DialogContent
-      class="flex max-h-[calc(var(--dbx-viewport-height)-6rem)] min-h-0 flex-col overflow-hidden p-4 gap-4"
-      :class="isFullscreen ? 'rounded-none max-h-none' : 'sm:max-w-[980px]'"
+      class="dbx-table-import-dialog flex min-h-0 min-w-0 flex-col gap-4 overflow-hidden p-4"
+      :class="{ 'dbx-table-import-dialog--fullscreen rounded-none': isFullscreen }"
       :style="dialogStyle"
       :portal-class="isFullscreen ? 'p-0' : undefined"
       :trap-focus="false"
@@ -1049,8 +1053,8 @@ watch(rawProgressPercent, (percent) => {
         </div>
       </DialogHeader>
 
-      <div class="min-h-0 flex-1 space-y-4 overflow-y-auto py-2 pr-1">
-        <div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
+      <div class="min-h-0 min-w-0 flex-1 space-y-4 overflow-y-auto py-2 pr-1">
+        <div class="table-import-target-row grid items-center gap-2">
           <input ref="fileInput" type="file" accept=".csv,.tsv,.txt,.json,.xlsx,.xlsm,.xls" :multiple="targetMode === 'create'" class="hidden" @change="handleFileInputChange" />
           <div class="flex h-10 min-w-0 items-center gap-2 rounded-md border bg-muted/20 px-3">
             <span class="shrink-0 text-xs text-muted-foreground">{{ t("tableImport.target") }}</span>
@@ -1125,7 +1129,7 @@ watch(rawProgressPercent, (percent) => {
               {{ t("tableImport.selectFile") }}
             </Button>
           </div>
-          <div class="grid grid-cols-5 gap-2">
+          <div class="table-import-format-grid grid gap-2">
             <button v-for="format in formatOptions" :key="format.value" type="button" class="min-h-20 rounded-md border px-3 py-2 text-left" :class="sourceFormat === format.value ? 'border-primary bg-primary/5' : 'hover:bg-muted/30'" @click="sourceFormat = format.value">
               <component :is="format.icon" class="mb-2 h-4 w-4 text-muted-foreground" />
               <div class="text-xs font-medium">{{ t(format.labelKey) }}</div>
@@ -1135,7 +1139,7 @@ watch(rawProgressPercent, (percent) => {
         </div>
 
         <div v-else-if="wizardStep === 'options'" class="space-y-4">
-          <div class="grid grid-cols-3 gap-3">
+          <div class="table-import-options-grid grid gap-3">
             <div class="space-y-1.5">
               <Label class="text-xs">{{ t("tableImport.sourceFormat") }}</Label>
               <Select :model-value="sourceFormat" @update:model-value="(value: any) => (sourceFormat = value)">
@@ -1161,7 +1165,7 @@ watch(rawProgressPercent, (percent) => {
             </div>
           </div>
 
-          <div class="grid grid-cols-[minmax(0,1fr)_minmax(220px,320px)] gap-3 rounded-md border p-3">
+          <div class="table-import-target-grid grid gap-3 rounded-md border p-3">
             <div class="space-y-1.5">
               <Label class="text-xs">{{ t("tableImport.targetMode") }}</Label>
               <div class="grid grid-cols-2 gap-2">
@@ -1184,7 +1188,7 @@ watch(rawProgressPercent, (percent) => {
             </div>
           </div>
 
-          <div v-if="sourceFormat === 'csv' || sourceFormat === 'tsv' || sourceFormat === 'delimited'" class="grid grid-cols-5 gap-3 rounded-md border p-3">
+          <div v-if="sourceFormat === 'csv' || sourceFormat === 'tsv' || sourceFormat === 'delimited'" class="table-import-delimited-grid grid gap-3 rounded-md border p-3">
             <div class="space-y-1.5">
               <Label class="text-xs">{{ t("tableImport.encoding") }}</Label>
               <Select :model-value="textEncoding" @update:model-value="(value: any) => (textEncoding = value)">
@@ -1227,7 +1231,7 @@ watch(rawProgressPercent, (percent) => {
             </label>
           </div>
 
-          <div v-else-if="sourceFormat === 'json'" class="grid grid-cols-2 gap-3 rounded-md border p-3">
+          <div v-else-if="sourceFormat === 'json'" class="table-import-json-grid grid gap-3 rounded-md border p-3">
             <div class="space-y-1.5">
               <Label class="text-xs">{{ t("tableImport.jsonShape") }}</Label>
               <Select :model-value="jsonShape" @update:model-value="(value: any) => (jsonShape = value)">
@@ -1243,7 +1247,7 @@ watch(rawProgressPercent, (percent) => {
             </div>
           </div>
 
-          <div v-else-if="sourceFormat === 'excel'" class="grid grid-cols-4 gap-3 rounded-md border p-3">
+          <div v-else-if="sourceFormat === 'excel'" class="table-import-excel-grid grid gap-3 rounded-md border p-3">
             <div class="space-y-1.5">
               <Label class="text-xs">{{ t("tableImport.sheet") }}</Label>
               <Select :model-value="selectedSheet" :disabled="!preview?.sheets?.length" @update:model-value="(value: any) => (selectedSheet = value)">
@@ -1297,7 +1301,7 @@ watch(rawProgressPercent, (percent) => {
             </div>
           </div>
 
-          <div v-if="preview" class="grid gap-3" :class="targetMode === 'create' ? 'grid-cols-[minmax(360px,460px)_1fr]' : 'grid-cols-[minmax(240px,300px)_1fr]'">
+          <div v-if="preview" class="table-import-mapping-grid grid min-w-0 gap-3" :class="{ 'table-import-mapping-grid--create': targetMode === 'create' }">
             <div class="rounded-md border">
               <div class="border-b px-3 py-2 text-xs font-medium">{{ t("tableImport.mapping") }}</div>
               <div class="max-h-[320px] overflow-auto p-2">
@@ -1383,7 +1387,7 @@ watch(rawProgressPercent, (percent) => {
         </div>
 
         <div v-else-if="wizardStep === 'review'" class="space-y-3">
-          <div class="grid grid-cols-2 gap-3 text-xs">
+          <div class="table-import-review-grid grid gap-3 text-xs">
             <div class="rounded-md border px-3 py-2">
               <div class="text-muted-foreground">{{ t("tableImport.target") }}</div>
               <div class="truncate font-medium">{{ targetLabel }}</div>
@@ -1401,7 +1405,7 @@ watch(rawProgressPercent, (percent) => {
               <div class="font-medium">{{ mappedCount }} / {{ preview?.columns.length || 0 }}</div>
             </div>
           </div>
-          <div class="grid grid-cols-3 gap-3">
+          <div class="table-import-review-controls grid gap-3">
             <div v-if="targetMode === 'existing'" class="space-y-1.5">
               <Label class="text-xs">{{ t("tableImport.mode") }}</Label>
               <Select :model-value="importMode" @update:model-value="(value: any) => (importMode = value)">
@@ -1508,7 +1512,7 @@ watch(rawProgressPercent, (percent) => {
         </div>
       </Teleport>
 
-      <DialogFooter class="shrink-0">
+      <DialogFooter class="shrink-0 flex-wrap">
         <Button variant="outline" :disabled="running" @click="open = false">
           <X class="mr-1.5 h-3.5 w-3.5" />
           {{ terminalStatus ? t("common.close") : t("dangerDialog.cancel") }}
@@ -1538,3 +1542,87 @@ watch(rawProgressPercent, (percent) => {
     </DialogContent>
   </Dialog>
 </template>
+
+
+<style scoped>
+.dbx-table-import-dialog {
+  width: calc(100vw - 2rem);
+  height: 760px;
+  max-width: 980px;
+  max-height: calc(var(--dbx-viewport-height) - 2rem);
+}
+
+.dbx-table-import-dialog--fullscreen {
+  width: 100vw;
+  height: var(--dbx-viewport-height);
+  max-width: 100vw;
+  max-height: var(--dbx-viewport-height);
+}
+
+.table-import-target-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.table-import-format-grid,
+.table-import-delimited-grid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.table-import-options-grid,
+.table-import-review-controls {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.table-import-target-grid {
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 320px);
+}
+
+.table-import-json-grid,
+.table-import-review-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.table-import-excel-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.table-import-mapping-grid {
+  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
+}
+
+.table-import-mapping-grid--create {
+  grid-template-columns: minmax(360px, 460px) minmax(0, 1fr);
+}
+
+@media (max-width: 800px) {
+  .table-import-format-grid,
+  .table-import-delimited-grid,
+  .table-import-excel-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .table-import-options-grid,
+  .table-import-target-grid,
+  .table-import-mapping-grid,
+  .table-import-mapping-grid--create,
+  .table-import-review-controls {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 520px) {
+  .dbx-table-import-dialog {
+    width: calc(100vw - 1rem);
+    max-height: calc(var(--dbx-viewport-height) - 1rem);
+  }
+
+  .table-import-target-row,
+  .table-import-format-grid,
+  .table-import-delimited-grid,
+  .table-import-json-grid,
+  .table-import-excel-grid,
+  .table-import-review-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+</style>

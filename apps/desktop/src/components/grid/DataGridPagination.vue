@@ -137,7 +137,7 @@ function handlePageInputKeydown(event: KeyboardEvent) {
         :max="maximumInputPage"
         :disabled="loading"
         :aria-label="t('grid.jumpToPage')"
-        class="h-5 w-14 shrink-0 px-1 text-center text-xs tabular-nums [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+        class="h-5 w-14 shrink-0 self-center px-1 !py-0 text-center text-xs leading-5 tabular-nums [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
         @keydown="handlePageInputKeydown"
       />
       <Button variant="ghost" size="icon" class="h-5 w-5 shrink-0" :disabled="loading || !canGoNextPage" @click="emit('nextPage')"><ChevronRight class="h-3 w-3" /></Button>

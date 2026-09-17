@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, ref, computed, onMounted, watch, type ComponentPublicInstance } from "vue";
+import { reactive, ref, computed, onMounted, onUnmounted, watch, type ComponentPublicInstance } from "vue";
 import { useI18n } from "vue-i18n";
 import { useConnectionStore } from "@/stores/connectionStore";
 import * as api from "@/lib/backend/api";
@@ -27,6 +27,37 @@ const open = defineModel<boolean>("open", { default: false });
 
 // Fullscreen page support (native window fullscreen in Tauri, Fullscreen API on web).
 const { isFullscreen, toggleFullscreen, exitFullscreenIfOwned } = useDialogFullscreen();
+
+// Manual resize (drag the right / bottom edge or the corner). Once the user has
+// picked a size, the inner panels stretch to fill it instead of using their
+// fixed default heights.
+const customSize = ref<{ w: number; h: number } | null>(null);
+type ResizeEdge = "e" | "s" | "se";
+let _resizeEdge: ResizeEdge | null = null;
+let _resizeStart: { x: number; y: number; w: number; h: number; pointerId: number; target: HTMLElement } | null = null;
+const DIALOG_MIN_WIDTH = 640;
+const DIALOG_MIN_HEIGHT = 420;
+
+const configRef = ref<HTMLElement | null>(null);
+const configStacked = ref(true);
+// Viewport breakpoints cannot describe a manually resized/embedded dialog.
+// Observe the available content box, not the requested width or its borders.
+watch([configRef, open], ([element, isOpen], _, onCleanup) => {
+  configStacked.value = true;
+  if (!element || !isOpen || typeof ResizeObserver === "undefined") return;
+  let active = true;
+  const observer = new ResizeObserver(([entry]) => {
+    if (active && entry?.target === configRef.value) configStacked.value = entry.contentRect.width < 700;
+  });
+  observer.observe(element, { box: "content-box" });
+  onCleanup(() => {
+    active = false;
+    observer.disconnect();
+  });
+});
+
+const fillHeight = computed(() => isFullscreen.value || customSize.value !== null);
+
 const dialogStyle = computed(() => {
   if (isFullscreen.value) {
     return {
@@ -37,8 +68,73 @@ const dialogStyle = computed(() => {
       borderRadius: "0",
     };
   }
-  return { width: "min(1100px, calc(100vw - 2rem))" };
+  if (customSize.value) {
+    return {
+      width: `${customSize.value.w}px`,
+      height: `${customSize.value.h}px`,
+      maxWidth: "calc(100vw - 2rem)",
+    };
+  }
+  const normalWidth = "min(1100px, calc(100vw - 2rem))";
+  return { width: normalWidth, maxWidth: normalWidth };
 });
+
+function onResizePointerDown(event: PointerEvent, edge: ResizeEdge) {
+  if (event.button !== 0 || !event.isPrimary || _resizeStart || isFullscreen.value) return;
+  const target = event.currentTarget as HTMLElement;
+  const el = target.closest("[data-slot='dialog-content']");
+  if (!el) return;
+  _resizeEdge = edge;
+  const rect = el.getBoundingClientRect();
+  _resizeStart = { x: event.clientX, y: event.clientY, w: rect.width, h: rect.height, pointerId: event.pointerId, target };
+  // Window listeners also cover embedded engines without pointer capture.
+  window.addEventListener("pointermove", onResizePointerMove);
+  window.addEventListener("pointerup", onResizePointerUp);
+  window.addEventListener("pointercancel", onResizePointerUp);
+  window.addEventListener("blur", cancelResize);
+  try {
+    target.setPointerCapture(event.pointerId);
+  } catch {
+    // Continue with window listeners when capture is unavailable.
+  }
+  event.preventDefault();
+}
+
+function onResizePointerMove(event: PointerEvent) {
+  if (!_resizeStart || !_resizeEdge || event.pointerId !== _resizeStart.pointerId) return;
+  const dx = event.clientX - _resizeStart.x;
+  const dy = event.clientY - _resizeStart.y;
+  let w = _resizeStart.w;
+  let h = _resizeStart.h;
+  // Both sides move because the dialog remains centered in its positioner.
+  if (_resizeEdge === "e" || _resizeEdge === "se") w = Math.max(DIALOG_MIN_WIDTH, w + 2 * dx);
+  if (_resizeEdge === "s" || _resizeEdge === "se") h = Math.max(DIALOG_MIN_HEIGHT, h + 2 * dy);
+  w = Math.min(Math.max(0, window.innerWidth - 32), w);
+  h = Math.min(Math.max(0, window.innerHeight - 32), h);
+  customSize.value = { w, h };
+}
+
+function onResizePointerUp(event: PointerEvent) {
+  if (event.pointerId === _resizeStart?.pointerId) cancelResize();
+}
+
+function cancelResize() {
+  const start = _resizeStart;
+  _resizeEdge = null;
+  _resizeStart = null;
+  window.removeEventListener("pointermove", onResizePointerMove);
+  window.removeEventListener("pointerup", onResizePointerUp);
+  window.removeEventListener("pointercancel", onResizePointerUp);
+  window.removeEventListener("blur", cancelResize);
+  try {
+    if (start?.target.hasPointerCapture(start.pointerId)) start.target.releasePointerCapture(start.pointerId);
+  } catch {
+    // The handle may already have been removed by closing/fullscreen.
+  }
+}
+
+watch([open, isFullscreen], cancelResize);
+onUnmounted(cancelResize);
 
 const props = defineProps<{
   prefillConnectionId?: string;
@@ -867,7 +963,7 @@ async function onFileSelected(event: Event) {
 
 <template>
   <Dialog v-model:open="open">
-    <DialogContent class="gap-0 overflow-hidden p-0 pl-4 pb-4 sm:pl-6 sm:pb-6 pt-2 flex min-h-0 flex-col min-w-0" :class="isFullscreen ? 'rounded-none' : ''" :style="dialogStyle" :portal-class="isFullscreen ? 'p-0' : undefined">
+    <DialogContent class="max-w-none gap-0 overflow-hidden p-0 px-4 pb-4 sm:px-6 sm:pb-6 pt-2 flex min-h-0 flex-col min-w-0" :class="isFullscreen ? 'rounded-none' : ''" :style="dialogStyle" :portal-class="isFullscreen ? 'p-0' : undefined">
       <DialogHeader class="flex shrink-0 flex-row items-center gap-2 pr-16 pl-2 pt-2 sm:pl-4">
         <DialogTitle class="flex items-center gap-2 text-base">
           <Database class="h-4 w-4" />
@@ -888,13 +984,13 @@ async function onFileSelected(event: Event) {
       </div>
 
       <template v-if="currentStep === 'config'">
-        <div class="flex flex-1 gap-4 min-h-0" :class="isFullscreen ? '' : 'h-[400px]'">
+        <div ref="configRef" class="dbx-generate-config flex flex-auto min-h-0 gap-4" :class="[{ 'dbx-generate-config--stacked': configStacked }, fillHeight ? '' : 'h-[400px]']">
           <!-- left: schema tree -->
-          <div class="w-64 shrink-0 rounded-md border flex flex-col min-h-0">
+          <div class="dbx-generate-tree flex shrink-0 flex-col min-h-0 min-w-0 rounded-md border">
             <div class="border-b px-3 py-2 text-xs font-medium text-muted-foreground">
               {{ t("dataGenerate.databaseObjects") }}
             </div>
-            <ScrollArea class="p-1 min-h-0" :class="isFullscreen ? 'flex-1' : 'h-[380px]'">
+            <ScrollArea class="min-h-0 flex-1 p-1">
               <div v-if="loading" class="flex items-center justify-center py-8">
                 <Loader2 class="h-4 w-4 animate-spin text-muted-foreground" />
               </div>
@@ -980,8 +1076,8 @@ async function onFileSelected(event: Event) {
           </div>
 
           <!-- right: active table config -->
-          <div class="flex-1 rounded-md border flex flex-col min-h-0">
-            <div class="overflow-y-auto min-h-0" :class="isFullscreen ? 'flex-1' : 'h-[380px]'">
+          <div class="flex min-w-0 flex-1 flex-col min-h-0 rounded-md border">
+            <div class="min-h-0 flex-1 overflow-y-auto">
               <div v-if="!activeCfg" class="flex h-full items-center justify-center text-xs text-muted-foreground">
                 {{ t("dataGenerate.selectTable") }}
               </div>
@@ -989,9 +1085,9 @@ async function onFileSelected(event: Event) {
               <template v-else-if="activeCol">
                 <div class="p-3 space-y-3">
                   <div class="flex items-center gap-2 text-sm font-medium">
-                    <Columns class="h-4 w-4 text-muted-foreground" />
-                    <span>{{ activeCol.columnName }}</span>
-                    <span class="text-xs text-muted-foreground font-mono">{{ activeCol.dataType }}</span>
+                    <Columns class="h-4 w-4 shrink-0 text-muted-foreground" />
+                    <span class="min-w-0 flex-1 break-all">{{ activeCol.columnName }}</span>
+                    <span class="min-w-0 break-all text-xs text-muted-foreground font-mono">{{ activeCol.dataType }}</span>
                   </div>
                   <GeneratorParamsPanel :config="activeCol" :connection-id="props.prefillConnectionId" :database="props.prefillDatabase" />
                   <div class="rounded border border-dashed border-amber-300 bg-amber-50 dark:bg-amber-950/20 px-2 py-1 text-[10px] font-mono text-amber-700 dark:text-amber-400 leading-relaxed break-all">
@@ -1009,12 +1105,12 @@ async function onFileSelected(event: Event) {
               <template v-else-if="activeCfg">
                 <div class="p-3 space-y-3">
                   <div class="flex items-center gap-2 text-sm font-medium">
-                    <Table class="h-4 w-4 text-green-500" />
-                    <span>{{ activeCfg.tableName }}</span>
+                    <Table class="h-4 w-4 shrink-0 text-green-500" />
+                    <span class="min-w-0 flex-1 break-all">{{ activeCfg.tableName }}</span>
                   </div>
-                  <div class="flex items-center gap-3 rounded-md bg-muted/20 px-3 py-2">
+                  <div class="flex flex-wrap items-center gap-3 rounded-md bg-muted/20 px-3 py-2">
                     <Label class="text-xs shrink-0">{{ t("dataGenerate.rowCount") }}:</Label>
-                    <Input v-model.number="activeCfg.rowCount" class="h-7 w-24 text-xs" />
+                    <Input v-model.number="activeCfg.rowCount" class="h-7 w-24 min-w-0 max-w-full text-xs" />
                   </div>
                 </div>
               </template>
@@ -1037,8 +1133,8 @@ async function onFileSelected(event: Event) {
           </div>
         </div>
 
-        <div class="rounded-md border w-full overflow-hidden flex flex-col min-h-0 mx-2 sm:mx-4" :class="isFullscreen ? 'flex-1' : ''">
-          <div v-if="generatedResults.length === 0" class="flex items-center justify-center text-xs text-muted-foreground" :class="isFullscreen ? 'flex-1' : 'h-[420px]'">
+        <div class="rounded-md border overflow-hidden flex flex-col min-h-0 min-w-0 mx-2 sm:mx-4" :class="fillHeight ? 'flex-1' : ''">
+          <div v-if="generatedResults.length === 0" class="flex items-center justify-center text-xs text-muted-foreground" :class="fillHeight ? 'flex-1' : 'h-[420px]'">
             {{ t("dataGenerate.noData") }}
           </div>
           <template v-else>
@@ -1059,9 +1155,9 @@ async function onFileSelected(event: Event) {
               </div>
               <Button variant="outline" size="sm" class="h-7 text-xs" @click="regenerate">{{ t("dataGenerate.regenerate") }}</Button>
             </div>
-            <div class="flex flex-col min-h-0" :class="isFullscreen ? 'flex-1' : 'h-[380px]'">
+            <div class="flex flex-col min-h-0" :class="fillHeight ? 'flex-1' : 'h-[380px]'">
               <div class="flex-1 overflow-auto overscroll-none bg-background">
-                <table class="w-full text-xs border-collapse" style="table-layout: auto">
+                <table class="min-w-full text-xs border-collapse" style="table-layout: auto">
                   <thead>
                     <tr class="sticky top-0 z-10 bg-[rgb(239_239_239)] dark:bg-muted/60 border-y border-border">
                       <th class="px-2 py-1.5 border-r border-border text-center text-muted-foreground select-none w-10 shrink-0">#</th>
@@ -1121,11 +1217,11 @@ async function onFileSelected(event: Event) {
       </template>
 
       <template v-else-if="currentStep === 'result'">
-        <div class="rounded-md border mx-2 mb-3 flex min-h-0 flex-col sm:mx-4" :class="isFullscreen ? 'flex-1' : ''">
+        <div class="rounded-md border mx-2 mb-3 flex min-h-0 flex-col sm:mx-4" :class="fillHeight ? 'flex-1' : ''">
           <div class="border-b bg-muted/10 px-4 py-2 text-sm font-medium">
             {{ t("dataGenerate.resultTitle") }}
           </div>
-          <div class="divide-y overflow-y-auto min-h-0" :class="isFullscreen ? 'flex-1' : 'max-h-[400px]'">
+          <div class="divide-y overflow-y-auto min-h-0" :class="fillHeight ? 'flex-1' : 'max-h-[400px]'">
             <div v-for="r in executeResults" :key="r.table" class="px-4 py-3 text-xs">
               <div class="flex items-center justify-between">
                 <span class="font-medium truncate">{{ r.table }}</span>
@@ -1158,8 +1254,8 @@ async function onFileSelected(event: Event) {
         </div>
       </template>
 
-      <DialogFooter class="flex shrink-0 items-center justify-between border-t pt-3 mx-2 mt-auto sm:mx-4 sm:justify-between">
-        <div class="flex items-center gap-2">
+      <DialogFooter class="mx-2 mt-auto flex shrink-0 flex-row flex-wrap items-center justify-between gap-2 border-t pt-3 sm:mx-4 sm:justify-between">
+        <div class="flex min-w-0 flex-wrap items-center gap-2">
           <template v-if="currentStep === 'config'">
             <Button variant="outline" size="sm" class="h-7 text-xs" @click="saveProfile">
               <Save class="mr-1 h-3 w-3" />
@@ -1182,7 +1278,7 @@ async function onFileSelected(event: Event) {
             <Button variant="outline" size="sm" class="h-7 text-xs" @click="copyAllSql">{{ t("dataGenerate.copyAllSql") }}</Button>
           </template>
         </div>
-        <div class="flex items-center gap-2">
+        <div class="flex min-w-0 flex-wrap items-center gap-2">
           <Button variant="outline" size="sm" class="h-7 text-xs" @click="open = false">
             <X class="mr-1 h-3 w-3" />
             {{ t("dangerDialog.cancel") }}
@@ -1206,6 +1302,15 @@ async function onFileSelected(event: Event) {
         </div>
       </DialogFooter>
       <input ref="fileInputRef" type="file" accept="application/json,.json" class="hidden" @change="onFileSelected" />
+
+      <!-- Resize handles (hidden in fullscreen) -->
+      <template v-if="!isFullscreen">
+        <div class="absolute bottom-0 right-0 z-50 h-5 w-5 cursor-se-resize" @pointerdown.prevent="onResizePointerDown($event, 'se')" @lostpointercapture="onResizePointerUp" style="touch-action: none">
+          <div class="absolute bottom-0.5 right-0.5 h-2.5 w-2.5 border-r-2 border-b-2 border-current opacity-30" />
+        </div>
+        <div class="absolute bottom-0 left-2 right-6 z-50 h-2 cursor-s-resize" @pointerdown.prevent="onResizePointerDown($event, 's')" @lostpointercapture="onResizePointerUp" style="touch-action: none" />
+        <div class="absolute right-0 top-2 bottom-6 z-50 w-2 cursor-e-resize" @pointerdown.prevent="onResizePointerDown($event, 'e')" @lostpointercapture="onResizePointerUp" style="touch-action: none" />
+      </template>
     </DialogContent>
 
     <Dialog v-model:open="optionsDialogOpen">
@@ -1270,3 +1375,20 @@ async function onFileSelected(event: Event) {
     </Dialog>
   </Dialog>
 </template>
+
+<style scoped>
+.dbx-generate-config {
+  flex-direction: row;
+}
+.dbx-generate-tree {
+  width: 256px;
+}
+.dbx-generate-config--stacked {
+  flex-direction: column;
+}
+.dbx-generate-config--stacked > .dbx-generate-tree {
+  width: 100%;
+  height: 160px;
+  max-height: 40%;
+}
+</style>

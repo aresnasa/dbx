@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { columnTypeFamily, defaultGeneratorParams, findGeneratorKey, formatGeneratedValue, generateTableData, isInsertableTableType } from "@/lib/dataGrid/dataGenerate";
+import { columnTypeFamily, defaultGeneratorParams, ensureJsonText, findGeneratorKey, formatGeneratedValue, generateJsonValue, generateTableData, isInsertableTableType } from "@/lib/dataGrid/dataGenerate";
 
 describe("columnTypeFamily — 数据库感知的列类型匹配", () => {
   it("PostgreSQL 家族类型", () => {
@@ -89,6 +89,12 @@ describe("findGeneratorKey — 先匹配类型再匹配列名", () => {
     expect(findGeneratorKey("data", "bytea", false, "postgres")).toBe("image");
   });
 
+  it("JSON 列由类型决定，不受列名启发式影响", () => {
+    expect(findGeneratorKey("data", "json", false, "postgres")).toBe("json");
+    expect(findGeneratorKey("content", "jsonb", false, "postgres")).toBe("json");
+    expect(findGeneratorKey("email", "json", false, "mysql")).toBe("json");
+  });
+
   it("文本列回落到列名模式", () => {
     expect(findGeneratorKey("email", "varchar(100)", false, "mysql")).toBe("email");
     expect(findGeneratorKey("user_name", "varchar(50)", false, "mysql")).toBe("full_name");
@@ -149,6 +155,34 @@ describe("formatGeneratedValue — 按数据库类型渲染布尔字面量", () 
     expect(formatGeneratedValue("true", "mysql", "varchar(10)")).toBe("'true'");
     expect(formatGeneratedValue(1, "postgres", "int4")).toBe("1");
   });
+
+  it("JSON 列：合法 JSON 原样输出，其他值包装为 JSON 字符串", () => {
+    expect(formatGeneratedValue('{"a": 1}', "postgres", "json")).toBe(`'{"a": 1}'`);
+    expect(formatGeneratedValue("[1, 2]", "postgres", "jsonb")).toBe(`'[1, 2]'`);
+    expect(formatGeneratedValue("The quick brown fox", "postgres", "json")).toBe(`'"The quick brown fox"'`);
+    expect(formatGeneratedValue("it's", "mysql", "json")).toBe(`'"it''s"'`);
+    expect(formatGeneratedValue(42, "postgres", "json")).toBe("'42'");
+    expect(formatGeneratedValue(true, "postgres", "jsonb")).toBe("'true'");
+    expect(formatGeneratedValue(null, "postgres", "json")).toBe("NULL");
+  });
+});
+
+describe("generateJsonValue / ensureJsonText — JSON 生成器", () => {
+  it("生成的对象/数组都是合法 JSON", () => {
+    for (let i = 0; i < 20; i++) {
+      expect(() => JSON.parse(generateJsonValue("object", i))).not.toThrow();
+      expect(Array.isArray(JSON.parse(generateJsonValue("array", i)))).toBe(true);
+      expect(() => JSON.parse(generateJsonValue("mixed", i))).not.toThrow();
+    }
+    expect(typeof JSON.parse(generateJsonValue(undefined, 0))).toBe("object");
+  });
+
+  it("ensureJsonText 保留合法 JSON，包装非法文本", () => {
+    expect(ensureJsonText('  {"k": "v"} ')).toBe('{"k": "v"}');
+    expect(ensureJsonText("plain")).toBe('"plain"');
+    expect(ensureJsonText("")).toBe('""');
+    expect(ensureJsonText(3.5)).toBe("3.5");
+  });
 });
 
 describe("generateTableData — 按类型生成数据与 SQL", () => {
@@ -179,6 +213,31 @@ describe("generateTableData — 按类型生成数据与 SQL", () => {
     const result = generateTableData(config, "postgres");
     expect(result.statements[0]).toMatch(/(TRUE|FALSE)/);
     expect(result.statements[0]).not.toMatch(/'(true|false)'/);
+  });
+
+  it("PG json 列默认生成合法 JSON 字面量", () => {
+    const config = {
+      tableName: "test",
+      schema: "public",
+      database: "db",
+      rowCount: 5,
+      columns: [
+        { columnName: "id", dataType: "character varying(255)", rowCount: 5 },
+        { columnName: "data", dataType: "json", rowCount: 5 },
+      ],
+    };
+    const result = generateTableData(config, "postgres");
+    for (const row of result.rows) {
+      expect(() => JSON.parse(String(row[1]))).not.toThrow();
+    }
+    // Even when a text generator is forced onto the json column the literal stays valid JSON.
+    const forced = generateTableData({ ...config, columns: [{ columnName: "data", dataType: "json", rowCount: 5, generatorKey: "text" }] }, "postgres");
+    const literals = forced.statements[0].match(/\('(.*)'\)/g) ?? [];
+    expect(literals.length).toBe(5);
+    for (const literal of literals) {
+      const inner = literal.slice(2, -2).replace(/''/g, "'");
+      expect(() => JSON.parse(inner)).not.toThrow();
+    }
   });
 
   it("返回列类型以便后续格式化", () => {

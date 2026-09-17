@@ -142,6 +142,15 @@ function applyTheme() {
 function setThemeMode(mode: AppThemeMode) {
   themeMode.value = mode;
   safeLocalStorageSet(APP_THEME_STORAGE_KEY, mode);
+  // Picking "system" must reflect the OS *right now*: re-read the media
+  // query instead of trusting the value cached at module init. Embedders
+  // that push the platform theme late (RusTerm's Servo panel) or environments
+  // that never fired `change` would otherwise leave the stale default in place
+  // until the next OS flip.
+  if (isSystemAppThemeMode(mode)) {
+    setupSystemThemeListener();
+    systemPrefersDark.value = readSystemPrefersDark();
+  }
   applyTheme();
 }
 

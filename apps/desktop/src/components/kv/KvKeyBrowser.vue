@@ -297,6 +297,14 @@ const keyListRefreshMaxIntervalMs = 30000;
 const kvBrowserSplitSizeStorageKey = "dbx-kv-browser-split-size";
 const savedKvBrowserSplitSize = Number(safeLocalStorageGet(kvBrowserSplitSizeStorageKey));
 const kvBrowserSplitSize = ref(savedKvBrowserSplitSize >= 20 && savedKvBrowserSplitSize <= 70 ? savedKvBrowserSplitSize : 38);
+// Narrow hosts (e.g. the right-side small window where RusTerm docks the
+// dbx webview, ~300px wide) cannot fit a left tree + right detail side by
+// side. Rotate the split into a top/bottom stack so the keyvalue browser
+// stays fully usable when it is the only thing on screen there.
+const browserRootRef = ref<HTMLElement | null>(null);
+const kvBrowserCompactWidthPx = 640;
+const kvBrowserCompact = ref(false);
+let kvBrowserCompactObserver: ResizeObserver | null = null;
 let keyLoadGeneration = 0;
 let detailRequestId = 0;
 let metadataRefreshTimer: ReturnType<typeof setInterval> | null = null;
@@ -1753,6 +1761,15 @@ watch(editKey, () => {
 });
 
 onMounted(() => {
+  const root = browserRootRef.value;
+  if (root && typeof ResizeObserver !== "undefined") {
+    kvBrowserCompact.value = root.clientWidth > 0 && root.clientWidth < kvBrowserCompactWidthPx;
+    kvBrowserCompactObserver = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? 0;
+      if (width > 0) kvBrowserCompact.value = width < kvBrowserCompactWidthPx;
+    });
+    kvBrowserCompactObserver.observe(root);
+  }
   initialLoadPromise = (async () => {
     try {
       await connectionStore.ensureConnected(props.connectionId);
@@ -1768,6 +1785,8 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  kvBrowserCompactObserver?.disconnect();
+  kvBrowserCompactObserver = null;
   keyLoadGeneration++;
   if (keySuggestionTimer) clearTimeout(keySuggestionTimer);
   if (selectedValueCopyTimer) clearTimeout(selectedValueCopyTimer);
@@ -1789,8 +1808,8 @@ defineExpose({
 </script>
 
 <template>
-  <div class="flex h-full min-h-0 flex-col bg-background">
-    <div class="flex shrink-0 items-center gap-2 border-b bg-muted/15 px-3 py-2.5 overflow-x-auto">
+  <div ref="browserRootRef" class="flex h-full min-h-0 flex-col bg-background">
+    <div class="flex flex-wrap shrink-0 items-center gap-2 border-b bg-muted/15 px-3 py-2.5 overflow-x-auto">
       <div v-if="$slots['toolbar-actions']" class="flex shrink-0 items-center gap-1">
         <slot name="toolbar-actions" />
       </div>
@@ -1858,7 +1877,7 @@ defineExpose({
       {{ labels.aclFiltered || "Some Consul KV keys are hidden by ACL policies." }}
     </div>
 
-    <Splitpanes class="kv-browser-splitpanes min-h-0 flex-1" @resized="handleKvBrowserSplitResized">
+    <Splitpanes class="kv-browser-splitpanes min-h-0 flex-1" :horizontal="kvBrowserCompact" @resized="handleKvBrowserSplitResized">
       <Pane :size="kvBrowserSplitSize" min-size="20" max-size="70">
         <div class="h-full min-h-0">
           <div v-if="loading" class="flex h-full items-center justify-center text-sm text-muted-foreground">
@@ -1934,7 +1953,7 @@ defineExpose({
             {{ labels.selectKey }}
           </div>
           <div v-else class="flex min-h-full flex-col">
-            <div class="flex shrink-0 items-start justify-between gap-3 border-b px-4 py-3">
+            <div class="flex shrink-0 flex-wrap items-start justify-between gap-3 border-b px-4 py-3">
               <div class="min-w-0">
                 <div class="truncate font-medium" :class="{ 'text-blue-600 dark:text-blue-400': metadataStyle === 'zookeeper' }">
                   <template v-for="(segment, index) in selectedKeyHighlightSegments" :key="index">
@@ -1964,7 +1983,7 @@ defineExpose({
                   </template>
                 </div>
               </div>
-              <div class="flex shrink-0 gap-2">
+              <div class="flex shrink-0 flex-wrap justify-end gap-2">
                 <Button v-if="onWatchKey" size="sm" variant="outline" class="h-8 gap-1.5" @click="watchSelectedKey">
                   <Square v-if="isWatchingSelectedKey" class="h-3.5 w-3.5" />
                   <Activity v-else class="h-3.5 w-3.5" />
@@ -2266,6 +2285,13 @@ defineExpose({
   border-left: 1px solid var(--border);
   background: transparent;
   cursor: col-resize;
+}
+
+.kv-browser-splitpanes.splitpanes--horizontal :deep(> .splitpanes__splitter) {
+  height: 5px !important;
+  border-top: 1px solid var(--border);
+  background: transparent;
+  cursor: row-resize;
 }
 
 .kv-browser-splitpanes :deep(.splitpanes__splitter:hover) {

@@ -70,6 +70,13 @@ describe("legacy WebView CSS fallbacks", () => {
     expect(fallback).toContain('[data-slot="dialog-content"][class*="max-w-[min(720px"]');
   });
 
+  it("honors fullscreen gutters and the data generator's responsive columns", () => {
+    expect(globalsCss).toMatch(/html\.dbx-legacy-webview \[data-slot="dialog-positioner"\]\.p-0\s*\{\s*padding: 0 !important;/);
+    expect(globalsCss).toContain(".md\\:flex-row");
+    expect(globalsCss).toContain(".md\\:h-auto");
+    expect(globalsCss).toContain(".md\\:w-64");
+  });
+
   it("uses a lightweight theme-aware mask without full-window filters", () => {
     expect(dialogOverlaySource).not.toContain("backdrop-filter");
     expect(dialogOverlaySource).toContain("bg-black/25");

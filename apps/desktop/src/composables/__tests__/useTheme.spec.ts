@@ -108,3 +108,39 @@ describe("useTheme on Linux", () => {
     expect(setTheme).toHaveBeenLastCalledWith("light");
   });
 });
+
+describe("useTheme system mode selection", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    vi.unstubAllGlobals();
+    installLocalStorageStub();
+    window.localStorage.clear();
+    document.documentElement.className = "";
+    document.documentElement.style.colorScheme = "";
+    mediaQueryChangeListener = undefined;
+    mediaQueryMatches = false;
+    installBrowserStubs();
+    vi.doMock("@/lib/backend/tauriRuntime", () => ({ isTauriRuntime: () => false }));
+  });
+
+  afterEach(() => {
+    vi.doUnmock("@/lib/backend/tauriRuntime");
+    vi.unstubAllGlobals();
+  });
+
+  it("re-reads the current OS preference when switching to system mode", async () => {
+    const theme = await loadTheme("light");
+    theme.applyTheme();
+    expect(theme.isDark.value).toBe(false);
+
+    // The OS went dark without a `change` event reaching us (e.g. the
+    // embedder pushed the platform theme after module init).
+    mediaQueryMatches = true;
+    theme.setThemeMode("system");
+
+    expect(theme.isDark.value).toBe(true);
+    expect(document.documentElement.classList.contains("dark")).toBe(true);
+    expect(document.documentElement.style.colorScheme).toBe("dark");
+  });
+});

@@ -4581,6 +4581,7 @@ export default withEnglishFallback({
       image: "画像/バイナリ",
       foreign_key: "外部キー",
       uuid: "UUID",
+      json: "JSON",
       regex: "正規表現",
       full_name: "氏名",
       gender: "性別",

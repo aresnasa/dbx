@@ -7908,6 +7908,23 @@ function clampCellDetailPanelSize(value: number, layout = cellDetailPanelLayout.
 // Table info drawers are tied to a single grid instance. Keeping this state
 // module-global leaks the drawer into other kept-alive tabs.
 const showTableInfo = ref(false);
+const tableInfoDrawerRef = ref<HTMLElement | null>(null);
+const tableInfoDrawerCompact = ref(true);
+watch(
+  tableInfoDrawerRef,
+  (element, _previous, onCleanup) => {
+    // Stay icon-only until a content-box measurement arrives, including reopen.
+    tableInfoDrawerCompact.value = true;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry?.target !== tableInfoDrawerRef.value) return;
+      tableInfoDrawerCompact.value = entry.contentRect.width <= 360;
+    });
+    observer.observe(element, { box: "content-box" });
+    onCleanup(() => observer.disconnect());
+  },
+  { flush: "post" },
+);
 const activeTableInfoTab = ref<TableInfoTab>(settingsStore.editorSettings.tableInfoActiveTab);
 const ddlContent = ref("");
 const ddlPreRef = ref<HTMLPreElement | null>(null);
@@ -10190,9 +10207,10 @@ const gridContextMenuItems = computed<ContextMenuItem[]>(() => {
           <!-- Table Info Drawer -->
           <div
             v-if="showTableInfo"
+            ref="tableInfoDrawerRef"
             data-native-clipboard
             class="table-info-drawer relative col-start-2 row-start-1 border-l flex flex-col bg-background min-w-0"
-            :class="[{ 'row-span-2': cellDetailPanelIsBottom }, { 'ddl-drawer-resizing': isResizingDdl }]"
+            :class="[{ 'row-span-2': cellDetailPanelIsBottom }, { 'ddl-drawer-resizing': isResizingDdl, 'table-info-drawer--compact': tableInfoDrawerCompact }]"
             :style="ddlDrawerStyle"
             @contextmenu="onDrawerContextMenu"
           >
@@ -11254,10 +11272,6 @@ const gridContextMenuItems = computed<ContextMenuItem[]>(() => {
   transition: none;
 }
 
-.table-info-drawer {
-  container-type: inline-size;
-}
-
 .table-info-action-button {
   gap: 0.25rem;
   max-width: 8rem;
@@ -11278,17 +11292,15 @@ const gridContextMenuItems = computed<ContextMenuItem[]>(() => {
     opacity 120ms ease;
 }
 
-@container (max-width: 360px) {
-  .table-info-action-button {
-    width: 1.5rem;
-    max-width: 1.5rem;
-    padding-inline: 0;
-  }
+.table-info-drawer--compact .table-info-action-button {
+  width: 1.5rem;
+  max-width: 1.5rem;
+  padding-inline: 0;
+}
 
-  .table-info-action-label {
-    max-width: 0;
-    opacity: 0;
-  }
+.table-info-drawer--compact .table-info-action-label {
+  max-width: 0;
+  opacity: 0;
 }
 
 .detail-drawer-resizing {

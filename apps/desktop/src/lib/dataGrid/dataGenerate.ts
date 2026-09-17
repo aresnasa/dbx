@@ -22,6 +22,7 @@ export const GeneratorHierarchy: GeneratorNode[] = [
       { key: "image", label: "图像或二进制" },
       { key: "foreign_key", label: "外键" },
       { key: "uuid", label: "UUID" },
+      { key: "json", label: "JSON" },
       { key: "regex", label: "正则表达式" },
     ],
   },
@@ -128,6 +129,8 @@ export interface GeneratorParams {
   rawPattern?: boolean;
   // uuid
   uuidHyphens?: boolean;
+  // json
+  jsonShape?: "object" | "array" | "mixed";
   // name
   nameFormat?: "full" | "last" | "first";
   languages?: string[];
@@ -1325,6 +1328,9 @@ export function findGeneratorKey(columnName: string, dataType: string, isAutoInc
   if (family === "datetime") return "datetime";
   if (family === "time") return "time";
   if (family === "uuid") return "uuid";
+  // JSON columns reject arbitrary text (PG `invalid input syntax for type json`,
+  // MySQL `Invalid JSON text`), so the type wins over any column-name hint.
+  if (family === "json") return "json";
   if (family === "integer" || family === "decimal") {
     if (/status|state/i.test(columnName)) return "enum";
     const isBoolName = /^(is|has|had|can|did|enable|disable|allow|use|visible|deleted|active|flag)[_-]?/i.test(columnName);
@@ -1891,6 +1897,9 @@ export function generateValue(columnName: string, dataType: string, generatorKey
     const uuid = parts.map((length) => Array.from({ length }, () => hex[Math.floor(Math.random() * 16)]).join(""));
     return params?.uuidHyphens !== false ? uuid.join("-") : uuid.join("");
   }
+  if (key === "json") {
+    return generateJsonValue(params?.jsonShape, rowIndex);
+  }
   if (key === "foreign_key") {
     return randInt(params?.min ?? 1, params?.max ?? 500);
   }
@@ -1918,6 +1927,59 @@ function generateByType(type: string, rowIndex: number): unknown {
 
 function quoteGeneratedString(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
+}
+
+const JSON_SAMPLE_WORDS = ["alpha", "beta", "gamma", "delta", "omega", "north", "south", "east", "west", "red", "green", "blue", "gold", "silver", "primary", "secondary"];
+const JSON_SAMPLE_STATUSES = ["active", "inactive", "pending", "archived"];
+
+function generateJsonObject(rowIndex: number): Record<string, unknown> {
+  const tagCount = randInt(1, 3);
+  const tags = new Set<string>();
+  while (tags.size < tagCount) tags.add(pick(JSON_SAMPLE_WORDS));
+  return {
+    id: rowIndex + 1,
+    name: `${pick(JSON_SAMPLE_WORDS)}_${randInt(100, 999)}`,
+    status: pick(JSON_SAMPLE_STATUSES),
+    score: randDecimal(0, 100, 2),
+    active: Math.random() < 0.5,
+    tags: Array.from(tags),
+    meta: { source: pick(["web", "mobile", "api"]), version: randInt(1, 9) },
+  };
+}
+
+/**
+ * Produce a JSON document as a string (so it survives the SQL formatting
+ * stage untouched). Shape defaults to an object; `array` yields a small list
+ * of scalars/objects and `mixed` alternates between the two.
+ */
+export function generateJsonValue(shape: GeneratorParams["jsonShape"] | undefined, rowIndex: number): string {
+  const effective = shape === "mixed" ? (Math.random() < 0.5 ? "object" : "array") : (shape ?? "object");
+  if (effective === "array") {
+    const len = randInt(1, 4);
+    const items = Math.random() < 0.5 ? Array.from({ length: len }, () => pick(JSON_SAMPLE_WORDS)) : Array.from({ length: len }, (_, i) => ({ id: rowIndex * 10 + i + 1, value: randInt(1, 1000) }));
+    return JSON.stringify(items);
+  }
+  return JSON.stringify(generateJsonObject(rowIndex));
+}
+
+/**
+ * Coerce whatever a generator produced into text a JSON column will accept:
+ * valid JSON passes through untouched, anything else becomes a JSON string.
+ */
+export function ensureJsonText(value: unknown): string {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed) {
+      try {
+        JSON.parse(trimmed);
+        return trimmed;
+      } catch {
+        // not JSON — wrap below
+      }
+    }
+    return JSON.stringify(value);
+  }
+  return JSON.stringify(value);
 }
 
 function formatOracleTemporalValue(value: string, dataType: string): string | null {
@@ -1955,6 +2017,9 @@ function formatBooleanValue(value: unknown, databaseType?: DatabaseType, dataTyp
 export function formatGeneratedValue(value: unknown, databaseType?: DatabaseType, dataType?: string): string {
   if (isGeneratedSqlExpression(value)) return value.sql;
   if (value === null || value === undefined) return "NULL";
+  if (dataType !== undefined && columnTypeFamily(dataType, databaseType) === "json") {
+    return quoteGeneratedString(ensureJsonText(value));
+  }
   if (typeof value === "number") return String(value);
   if (typeof value === "boolean") {
     const booleanLiteral = formatBooleanValue(value, databaseType, dataType);
